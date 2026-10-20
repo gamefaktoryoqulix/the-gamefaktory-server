@@ -1,0 +1,53 @@
+# ==========================================
+# GameFaktory Root .gitignore
+# ==========================================
+
+# 1. Credentials & Sensitive Secrets
+.env
+.env.*
+*.env
+serviceAccountKey.json
+*connection string*
+*.txt
+serverold.js
+
+# 2. Personal Learning Notes & Obsidian Vault
+Learning Backend & Databse Setup/
+.obsidian/
+learning_notes.md
+Project_Tracker.md
+backend_setup_guide.md
+
+# 3. AI Agent & IDE Skills Directories
+.agents/
+.claude/
+.cursor/
+.devin/
+skills/
+.system_generated/
+
+# 4. Dependency Directories & Cache
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# 5. Build Artifacts
+dist/
+dist-ssr/
+build/
+coverage/
+
+# 6. Operating System & Editor Files
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vscode/*
+!.vscode/extensions.json
+.idea/

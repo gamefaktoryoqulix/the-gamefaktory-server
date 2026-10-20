@@ -1,0 +1,150 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String           @id @default(uuid())
+  email           String           @unique
+  name            String?
+  phone           String?          @unique
+  age             Int?
+  password        String?
+  emailVerified   Boolean          @default(false)
+  image           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  sessions        Session[]
+  accounts        Account[]
+  invoicesClaimed Invoice[]
+  gameplayCredits GameplayCredit[]
+  gameSessions    GameSession[]
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                    String    @id
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+model Verification {
+  id         String    @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+}
+
+// ----------------------------------------------------
+// MULTI-TENANT & CLIENT ONBOARDING MODELS (RAILROLLS)
+// ----------------------------------------------------
+
+model Brand {
+  id            String           @id @default(uuid())
+  slug          String           @unique // e.g. "railrolls"
+  name          String           // e.g. "Railrolls"
+  webhookSecret String?          // For POS webhooks (matching x-webhook-secret)
+  apiKey        String?          @unique // API key for external integrations
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  
+  invoices      Invoice[]
+  credits       GameplayCredit[]
+  sessions      GameSession[]
+}
+
+enum InvoiceStatus {
+  UNCLAIMED
+  CLAIMED
+  EXPIRED
+  CANCELLED
+}
+
+model Invoice {
+  id              String        @id @default(uuid())
+  brandId         String
+  brand           Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  outletCode      String?       // restID from Railrolls POS
+  invoiceNumber   String        // orderID from Railrolls POS
+  customerPhone   String?       // Customer phone recorded on bill (if present)
+  itemsCount      Int           @default(1)
+  maxPlaysAllowed Int           @default(3) // itemsCount * 3 plays
+  amount          Decimal?      @db.Decimal(10, 2)
+  status          InvoiceStatus @default(UNCLAIMED)
+  claimedByUserId String?
+  claimedByUser   User?         @relation(fields: [claimedByUserId], references: [id])
+  claimedAt       DateTime?
+  rawPayload      Json?         // Full raw JSON properties from POS webhook
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([brandId, invoiceNumber])
+  @@index([brandId, customerPhone, status])
+  @@index([brandId, status])
+}
+
+model GameplayCredit {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brandId         String
+  brand           Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  totalGranted    Int       @default(0)
+  playsRemaining  Int       @default(0)
+  sourceType      String    @default("INVOICE") // "INVOICE", "QR", "DAILY"
+  sourceReference String?   // Invoice number or QR code
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId, brandId, playsRemaining])
+}
+
+model GameSession {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brandId      String
+  brand        Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  sessionToken String    @unique // Single-use cryptographic token for anti-cheat
+  score        Int       @default(0)
+  duration     Int?      // Duration in seconds
+  isCompleted  Boolean   @default(false)
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([brandId, score])
+  @@index([userId, brandId])
+}

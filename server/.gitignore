@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+*.env
+serviceAccountKey.json
+*connection string*
+*.txt
+*.md
+.agents/
+.claude/
+.cursor/
+.devin/
+skills/
+.system_generated/
+npm-debug.log*
+.DS_Store
+Thumbs.db
