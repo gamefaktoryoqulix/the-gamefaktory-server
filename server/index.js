@@ -1368,6 +1368,53 @@ app.get('/api/admin/brands', async (req, res) => {
   }
 });
 
+// 3. Delete a Brand by ID (Cascades cleanly to tokens, sessions, credits, and admins)
+app.delete('/api/admin/brands/:brandId', async (req, res) => {
+  try {
+    const { brandId } = req.params;
+    const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+    if (!brand) return res.status(404).json({ error: 'Brand not found' });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.gameSession.deleteMany({ where: { brandId: brand.id } });
+      await tx.qrToken.deleteMany({ where: { brandId: brand.id } });
+      await tx.gameplayCredit.deleteMany({ where: { brandId: brand.id } });
+      await tx.invoice.deleteMany({ where: { brandId: brand.id } });
+      await tx.user.deleteMany({ where: { brandId: brand.id } });
+      await tx.brand.delete({ where: { id: brand.id } });
+    });
+
+    console.log(`[Core Admin] Deleted brand "${brand.name}" (${brand.slug}) and all related records.`);
+    return res.json({ success: true, message: `Brand "${brand.name}" deleted successfully` });
+  } catch (error) {
+    console.error('[Delete Brand Error]:', error);
+    return res.status(500).json({ error: error.message || 'Failed to delete brand' });
+  }
+});
+
+// 4. Wipe All Brands (Reset whole multi-tenant database for clean slate)
+app.post('/api/admin/brands/reset-all', async (req, res) => {
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.gameSession.deleteMany({});
+      await tx.qrToken.deleteMany({});
+      await tx.gameplayCredit.deleteMany({});
+      await tx.invoice.deleteMany({});
+      await tx.session.deleteMany({});
+      await tx.account.deleteMany({});
+      await tx.user.deleteMany({});
+      await tx.brand.deleteMany({});
+    });
+
+    console.log('[Core Admin] Completely wiped all brand and tenant records.');
+    return res.json({ success: true, message: 'All brands and records have been deleted successfully.' });
+  } catch (error) {
+    console.error('[Reset Brands Error]:', error);
+    return res.status(500).json({ error: error.message || 'Failed to reset brands' });
+  }
+});
+
+
 // 3. Admin / Superadmin Login Verification (for brand dashboard access)
 app.post('/api/admin/login', async (req, res) => {
   try {

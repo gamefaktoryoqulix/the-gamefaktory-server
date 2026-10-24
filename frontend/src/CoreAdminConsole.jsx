@@ -99,6 +99,12 @@ const Icons = {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
     </svg>
+  ),
+  Trash: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
   )
 };
 
@@ -162,6 +168,44 @@ export default function CoreAdminConsole() {
       console.error('Failed to fetch brands:', err);
     } finally {
       setIsLoadingBrands(false);
+    }
+  };
+
+  // Delete Single Brand
+  const handleDeleteBrand = async (brandId, brandName) => {
+    if (!window.confirm(`Are you sure you want to delete "${brandName}"? All its tokens, sessions, and administrators will be removed.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/brands/${brandId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        fetchBrands();
+      } else {
+        alert(data.error || 'Failed to delete brand');
+      }
+    } catch (err) {
+      console.error('Delete brand error:', err);
+      alert('Network error while deleting brand');
+    }
+  };
+
+  // Reset Entire Database
+  const handleResetAllBrands = async () => {
+    if (!window.confirm(`DANGER: Are you sure you want to wipe ALL brands and records in ${activeConfig.name}? This gives you a 100% clean slate to onboard fresh.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/brands/reset-all`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        fetchBrands();
+      } else {
+        alert(data.error || 'Failed to reset database');
+      }
+    } catch (err) {
+      console.error('Reset error:', err);
+      alert('Network error while resetting');
     }
   };
 
@@ -761,6 +805,17 @@ export default function CoreAdminConsole() {
                   <Icons.Refresh spinning={isLoadingBrands} />
                   <span>{isLoadingBrands ? 'Refreshing...' : 'Refresh'}</span>
                 </button>
+                {brandsList.length > 0 && (
+                  <button 
+                    className="btn-cyber-secondary" 
+                    onClick={handleResetAllBrands}
+                    style={{ borderColor: 'rgba(255, 75, 75, 0.4)', color: '#ff6b6b', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    title="Wipe all brands and records for a completely clean slate"
+                  >
+                    <Icons.Trash />
+                    <span>Reset All</span>
+                  </button>
+                )}
                 <button
                   className="btn-add-brand-prominent"
                   onClick={() => { setActiveTab('register'); setCurrentStep(1); }}
@@ -904,16 +959,28 @@ export default function CoreAdminConsole() {
                     {/* Brand Card Footer */}
                     <div className="brand-card-footer">
                       <span>Joined {new Date(brand.createdAt).toLocaleDateString()}</span>
-                      <button 
-                        className="btn-card-launch"
-                        onClick={() => {
-                          window.open(`/?brand=${brand.slug}`, '_blank');
-                        }}
-                        title={`Open dedicated brand view for ${brand.slug}`}
-                      >
-                        <span>Launch View</span>
-                        <Icons.ExternalLink />
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          className="btn-card-launch"
+                          style={{ borderColor: 'rgba(255, 75, 75, 0.3)', color: '#ff6b6b' }}
+                          onClick={() => handleDeleteBrand(brand.id, brand.name)}
+                          title={`Delete ${brand.name} from database`}
+                        >
+                          <Icons.Trash />
+                          <span>Delete</span>
+                        </button>
+                        <button 
+                          className="btn-card-launch"
+                          onClick={() => {
+                            window.open(`/?brand=${brand.slug}`, '_blank');
+                          }}
+                          title={`Open dedicated brand view for ${brand.slug}`}
+                        >
+                          <span>Launch</span>
+                          <Icons.ExternalLink />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
