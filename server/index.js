@@ -584,6 +584,47 @@ app.post('/api/dev/reset-demo', async (req, res) => {
 // POPULAR ELECTRICALS - QR TOKEN ENDPOINTS (SPARKY RUN)
 // ----------------------------------------------------
 
+// Multi-tenant Brand Resolution Helper: Resolves brand & handles aliases (e.g., 'popular' <-> 'popular-electricals-qatar')
+async function resolveBrandAndAliases(slugInput) {
+  const cleanSlug = (slugInput || 'popular').trim().toLowerCase();
+  
+  // If querying popular or popular-electricals-qatar, gather both
+  if (cleanSlug === 'popular' || cleanSlug === 'popular-electricals-qatar') {
+    const brands = await prisma.brand.findMany({
+      where: {
+        slug: { in: ['popular', 'popular-electricals-qatar'] }
+      }
+    });
+    if (brands.length === 0) return null;
+    
+    // Primary is exact match if found, else first available
+    const primary = brands.find(b => b.slug === cleanSlug) || brands[0];
+    const brandIds = brands.map(b => b.id);
+    const brandSlugs = brands.map(b => b.slug);
+    
+    return {
+      primary,
+      brandIds,
+      brandSlugs,
+      matchesBrandId: (id) => brandIds.includes(id),
+      matchesBrandSlug: (slug) => brandSlugs.includes(slug)
+    };
+  }
+
+  // Standard brand resolution
+  const brand = await prisma.brand.findUnique({ where: { slug: cleanSlug } });
+  if (!brand) return null;
+
+  return {
+    primary: brand,
+    brandIds: [brand.id],
+    brandSlugs: [brand.slug],
+    matchesBrandId: (id) => id === brand.id,
+    matchesBrandSlug: (slug) => slug === brand.slug
+  };
+}
+
+
 // 1. Verify Token (Brand-Isolated)
 app.get(['/api/v1/tokens/verify', '/api/token/verify'], async (req, res) => {
   try {
@@ -608,8 +649,13 @@ app.get(['/api/v1/tokens/verify', '/api/token/verify'], async (req, res) => {
       });
     }
 
-    // Strict multi-tenant brand isolation check
-    if (token.brand.slug !== brandSlug) {
+    const brandRes = await resolveBrandAndAliases(brandSlug);
+    if (!brandRes) {
+      return res.status(404).json({ valid: false, error: `Brand '${brandSlug}' not found`, livesRemaining: 0 });
+    }
+
+    // Strict multi-tenant brand isolation check (allowing aliased brand IDs)
+    if (!brandRes.matchesBrandId(token.brandId)) {
       return res.status(403).json({
         valid: false,
         status: 'FORBIDDEN',
@@ -748,10 +794,11 @@ app.post(
         return res.status(400).json({ success: false, error: 'Token is required' });
       }
 
-      const brand = await prisma.brand.findUnique({ where: { slug: brandSlug } });
-      if (!brand) {
+      const brandRes = await resolveBrandAndAliases(brandSlug);
+      if (!brandRes) {
         return res.status(404).json({ success: false, error: `Brand '${brandSlug}' not found`, livesRemaining: 0 });
       }
+      const brand = brandRes.primary;
 
       const token = await prisma.qrToken.findUnique({
         where: { code: tokenCode },
@@ -766,8 +813,8 @@ app.post(
         });
       }
 
-      // Multi-tenant brand isolation check
-      if (token.brand.slug !== brandSlug) {
+      // Multi-tenant brand isolation check (allowing aliased brand IDs)
+      if (!brandRes.matchesBrandId(token.brandId)) {
         return res.status(403).json({
           success: false,
           error: `This token does not belong to ${brandSlug}`,
@@ -862,10 +909,11 @@ app.post(
         return res.status(400).json({ success: false, error: 'Session token is required.' });
       }
 
-      const brand = await prisma.brand.findUnique({ where: { slug: brandSlug } });
-      if (!brand) {
+      const brandRes = await resolveBrandAndAliases(brandSlug);
+      if (!brandRes) {
         return res.status(404).json({ success: false, error: `Brand '${brandSlug}' not found` });
       }
+      const brand = brandRes.primary;
 
       // Query session with strict brand and token verification
       let session = await prisma.gameSession.findUnique({
@@ -876,7 +924,7 @@ app.post(
       if (!session) {
         // Fallback: If session not found by token, look for active session for this user/brand
         session = await prisma.gameSession.findFirst({
-          where: { brandId: brand.id, isCompleted: false },
+          where: { brandId: { in: brandRes.brandIds }, isCompleted: false },
           orderBy: { startedAt: 'desc' },
           include: { brand: true, user: true },
         });
@@ -886,8 +934,8 @@ app.post(
         return res.status(404).json({ success: false, error: 'Invalid or expired game session token.' });
       }
 
-      // Multi-tenant check: ensure session belongs strictly to this brand
-      if (session.brandId !== brand.id) {
+      // Multi-tenant check: ensure session belongs strictly to this brand or its aliases
+      if (!brandRes.matchesBrandId(session.brandId)) {
         return res.status(403).json({ success: false, error: 'Cross-brand session submission is forbidden.' });
       }
 
@@ -909,11 +957,11 @@ app.post(
         },
       });
 
-      // Calculate player's brand-specific stats (isolated strictly to this brandId)
+      // Calculate player's brand-specific stats (across brandId and aliases)
       const userBrandSessions = await prisma.gameSession.findMany({
         where: {
           userId: session.userId,
-          brandId: brand.id,
+          brandId: { in: brandRes.brandIds },
           isCompleted: true,
         },
       });
@@ -963,8 +1011,9 @@ app.get(
       const userId = req.params.userId || req.query.userId;
       const phone = req.query.phone;
 
-      const brand = await prisma.brand.findUnique({ where: { slug: brandSlug } });
-      if (!brand) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
+      const brandRes = await resolveBrandAndAliases(brandSlug);
+      if (!brandRes) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
+      const brand = brandRes.primary;
 
       let user = null;
       if (userId) {
@@ -978,10 +1027,10 @@ app.get(
         return res.status(404).json({ error: 'Player not found in database' });
       }
 
-      // STRICT BRAND ISOLATION: query ONLY sessions matching brandId == brand.id
+      // Query sessions matching brandId in brandIds (including aliases)
       const sessions = await prisma.gameSession.findMany({
         where: {
-          brandId: brand.id,
+          brandId: { in: brandRes.brandIds },
           userId: user.id,
           isCompleted: true,
         },
@@ -1022,13 +1071,14 @@ app.get(
 app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => {
   try {
     const brandSlug = (req.params.brandSlug || 'popular').trim().toLowerCase();
-    const brand = await prisma.brand.findUnique({ where: { slug: brandSlug } });
-    if (!brand) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
+    const brandRes = await resolveBrandAndAliases(brandSlug);
+    if (!brandRes) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
+    const brand = brandRes.primary;
 
-    // Find all completed game sessions for this brand
+    // Find all completed game sessions for this brand and any aliases
     const brandSessions = await prisma.gameSession.findMany({
       where: {
-        brandId: brand.id,
+        brandId: { in: brandRes.brandIds },
         isCompleted: true,
       },
       include: { user: true },
@@ -1037,13 +1087,13 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
 
     // 2. Also include users who claimed or have tokens under this brand
     const brandTokens = await prisma.qrToken.findMany({
-      where: { brandId: brand.id, userId: { not: null } },
+      where: { brandId: { in: brandRes.brandIds }, userId: { not: null } },
       include: { user: true },
     });
 
     // 3. Also include users registered or credited under this brand
     const brandCredits = await prisma.gameplayCredit.findMany({
-      where: { brandId: brand.id },
+      where: { brandId: { in: brandRes.brandIds } },
       include: { user: true },
     });
 
@@ -1115,6 +1165,278 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
   }
 });
 
+// ====================================================
+// CORE ADMIN & BRAND REGISTRATION MANAGEMENT SYSTEM
+// ====================================================
+
+// Helper for secure password hashing using Node native crypto (PBKDF2/scrypt)
+
+
+function hashAdminPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyAdminPassword(password, storedHash) {
+  if (!storedHash || !storedHash.includes(':')) return false;
+  const [salt, key] = storedHash.split(':');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(key, 'hex'), Buffer.from(hash, 'hex'));
+}
+
+// 1. Register a Brand with Superadmins and optional Admins
+app.post('/api/admin/brands/register', async (req, res) => {
+  try {
+    const { brandName, gameName, brandSlug, webhookSecret, superadmins = [], admins = [] } = req.body;
+
+    if (!brandName || !brandName.trim()) {
+      return res.status(400).json({ error: 'Brand name is required' });
+    }
+    if (!gameName || !gameName.trim()) {
+      return res.status(400).json({ error: 'Game name is required' });
+    }
+    if (!superadmins || !Array.isArray(superadmins) || superadmins.length === 0) {
+      return res.status(400).json({ error: 'At least one Superadmin is required' });
+    }
+
+    // Validate superadmins format
+    for (let i = 0; i < superadmins.length; i++) {
+      const sa = superadmins[i];
+      if (!sa.username || !sa.username.trim()) {
+        return res.status(400).json({ error: `Superadmin #${i + 1} requires a valid username` });
+      }
+      if (!sa.password || sa.password.length < 6) {
+        return res.status(400).json({ error: `Superadmin #${i + 1} password must be at least 6 characters` });
+      }
+    }
+
+    // Validate optional admins format
+    if (admins && Array.isArray(admins)) {
+      for (let i = 0; i < admins.length; i++) {
+        const ad = admins[i];
+        if (!ad.email || !ad.email.includes('@')) {
+          return res.status(400).json({ error: `Admin #${i + 1} requires a valid email address` });
+        }
+        if (!ad.password || ad.password.length < 6) {
+          return res.status(400).json({ error: `Admin #${i + 1} password must be at least 6 characters` });
+        }
+      }
+    }
+
+    // Generate safe slug
+    const computedSlug = (brandSlug || brandName)
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    // Transaction to create Brand + Superadmins + Admins atomically
+    const result = await prisma.$transaction(async (tx) => {
+      // Check if brand slug already exists
+      const existing = await tx.brand.findUnique({
+        where: { slug: computedSlug }
+      });
+      if (existing) {
+        throw new Error(`A brand with slug "${computedSlug}" already exists`);
+      }
+
+      // Create Brand
+      const brand = await tx.brand.create({
+        data: {
+          slug: computedSlug,
+          name: brandName.trim(),
+          gameName: gameName.trim(),
+          webhookSecret: webhookSecret || `gf_whsec_${computedSlug}_${crypto.randomBytes(8).toString('hex')}`,
+          apiKey: `gf_live_${computedSlug}_${crypto.randomBytes(12).toString('hex')}`
+        }
+      });
+
+      const createdSuperadmins = [];
+      for (const sa of superadmins) {
+        const cleanUsername = sa.username.trim().toLowerCase();
+        // Check username uniqueness
+        const userWithUsername = await tx.user.findFirst({
+          where: { username: cleanUsername }
+        });
+        if (userWithUsername) {
+          throw new Error(`Username "${cleanUsername}" is already taken`);
+        }
+
+        const emailAlias = `${cleanUsername}@${computedSlug}.gamefaktory.com`;
+        const hashedPassword = hashAdminPassword(sa.password);
+
+        const superUser = await tx.user.create({
+          data: {
+            username: cleanUsername,
+            name: sa.name || sa.username,
+            email: emailAlias,
+            password: hashedPassword,
+            role: 'SUPERADMIN',
+            brandId: brand.id
+          }
+        });
+        createdSuperadmins.push({
+          id: superUser.id,
+          username: superUser.username,
+          name: superUser.name,
+          email: superUser.email,
+          role: superUser.role
+        });
+      }
+
+      const createdAdmins = [];
+      if (admins && Array.isArray(admins)) {
+        for (const ad of admins) {
+          const cleanEmail = ad.email.trim().toLowerCase();
+          const existingEmail = await tx.user.findUnique({
+            where: { email: cleanEmail }
+          });
+          if (existingEmail) {
+            throw new Error(`Email "${cleanEmail}" is already registered`);
+          }
+
+          const hashedPassword = hashAdminPassword(ad.password);
+          const adminUser = await tx.user.create({
+            data: {
+              email: cleanEmail,
+              username: ad.username ? ad.username.trim().toLowerCase() : cleanEmail.split('@')[0],
+              name: ad.name || cleanEmail.split('@')[0],
+              password: hashedPassword,
+              role: 'ADMIN',
+              brandId: brand.id
+            }
+          });
+          createdAdmins.push({
+            id: adminUser.id,
+            email: adminUser.email,
+            username: adminUser.username,
+            name: adminUser.name,
+            role: adminUser.role
+          });
+        }
+      }
+
+      return { brand, createdSuperadmins, createdAdmins };
+    });
+
+    console.log(`[Core Admin] Registered Brand "${result.brand.name}" (${result.brand.slug}) with ${result.createdSuperadmins.length} Superadmins and ${result.createdAdmins.length} Admins.`);
+    return res.status(201).json({
+      success: true,
+      message: `Brand "${result.brand.name}" registered successfully`,
+      brand: result.brand,
+      superadmins: result.createdSuperadmins,
+      admins: result.createdAdmins
+    });
+  } catch (error) {
+    console.error('[Brand Registration Error]:', error);
+    return res.status(400).json({ error: error.message || 'Failed to register brand' });
+  }
+});
+
+// 2. List all registered brands with their games and admin rosters
+app.get('/api/admin/brands', async (req, res) => {
+  try {
+    const brands = await prisma.brand.findMany({
+      include: {
+        admins: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            name: true,
+            role: true,
+            createdAt: true
+          }
+        },
+        _count: {
+          select: {
+            tokens: true,
+            sessions: true,
+            invoices: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return res.json({ success: true, count: brands.length, brands });
+  } catch (error) {
+    console.error('[List Brands Error]:', error);
+    return res.status(500).json({ error: 'Failed to retrieve brands' });
+  }
+});
+
+// 3. Admin / Superadmin Login Verification (for brand dashboard access)
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { identifier, password, brandSlug } = req.body;
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Username/Email and password are required' });
+    }
+
+    const cleanIdentifier = identifier.trim().toLowerCase();
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: cleanIdentifier },
+          { email: cleanIdentifier }
+        ]
+      },
+      include: {
+        brand: true
+      }
+    });
+
+    if (!user || !user.password) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    if (!['SUPERADMIN', 'ADMIN', 'CORE_ADMIN'].includes(user.role)) {
+      return res.status(403).json({ error: 'Access denied: User is not an authorized administrator' });
+    }
+
+    // Optional Brand Isolation check (supporting aliases)
+    if (brandSlug && user.brand && user.role !== 'CORE_ADMIN') {
+      const brandRes = await resolveBrandAndAliases(brandSlug);
+      if (!brandRes || !brandRes.matchesBrandId(user.brand.id)) {
+        return res.status(403).json({ error: `This administrator account does not belong to ${brandSlug}` });
+      }
+    }
+
+    const isValid = verifyAdminPassword(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+
+    return res.json({
+      success: true,
+      message: 'Authentication successful',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        brandId: user.brandId,
+        brand: user.brand ? {
+          id: user.brand.id,
+          name: user.brand.name,
+          slug: user.brand.slug,
+          gameName: user.brand.gameName
+        } : null
+      }
+    });
+  } catch (error) {
+    console.error('[Admin Login Error]:', error);
+    return res.status(500).json({ error: 'Internal login error' });
+  }
+});
+
 // Basic Test Route
 app.get('/', (req, res) => {
   res.send('GameFaktory Backend with Better Auth is running!');
@@ -1125,3 +1447,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+

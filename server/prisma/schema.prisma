@@ -13,10 +13,14 @@ datasource db {
 model User {
   id              String           @id @default(uuid())
   email           String           @unique
+  username        String?          @unique // For admin/superadmin login
   name            String?
   phone           String?          @unique
   age             Int?
-  password        String?
+  password        String?          // Hashed password for admin authentication
+  role            String           @default("PLAYER") // "CORE_ADMIN", "SUPERADMIN", "ADMIN", "PLAYER"
+  brandId         String?          // Tenant isolation: Which brand this admin belongs to
+  brand           Brand?           @relation("BrandAdmins", fields: [brandId], references: [id], onDelete: SetNull)
   emailVerified   Boolean          @default(false)
   image           String?
   createdAt       DateTime         @default(now())
@@ -28,6 +32,8 @@ model User {
   gameplayCredits GameplayCredit[]
   gameSessions    GameSession[]
   qrTokens        QrToken[]
+
+  @@index([brandId, role])
 }
 
 model Session {
@@ -74,13 +80,15 @@ model Verification {
 
 model Brand {
   id            String           @id @default(uuid())
-  slug          String           @unique // e.g. "railrolls"
-  name          String           // e.g. "Railrolls"
+  slug          String           @unique // e.g. "railrolls", "popular"
+  name          String           // e.g. "Popular Electricals"
+  gameName      String?          // e.g. "Sparky Run", "Railrolls Dash"
   webhookSecret String?          // For POS webhooks (matching x-webhook-secret)
   apiKey        String?          @unique // API key for external integrations
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   
+  admins        User[]           @relation("BrandAdmins")
   invoices      Invoice[]
   credits       GameplayCredit[]
   sessions      GameSession[]
