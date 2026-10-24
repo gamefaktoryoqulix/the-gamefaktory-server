@@ -27,6 +27,7 @@ model User {
   invoicesClaimed Invoice[]
   gameplayCredits GameplayCredit[]
   gameSessions    GameSession[]
+  qrTokens        QrToken[]
 }
 
 model Session {
@@ -83,6 +84,7 @@ model Brand {
   invoices      Invoice[]
   credits       GameplayCredit[]
   sessions      GameSession[]
+  tokens        QrToken[]
 }
 
 enum InvoiceStatus {
@@ -147,4 +149,31 @@ model GameSession {
 
   @@index([brandId, score])
   @@index([userId, brandId])
+}
+
+model QrToken {
+  id              String       @id @default(uuid())
+  code            String       @unique // e.g. "PET-9XK2-MP8A", "122ERF"
+  
+  // Brand isolation
+  brandId         String
+  brand           Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  gameSlug        String       @default("sparky-run")
+  
+  initialLives    Int          @default(3)
+  livesRemaining  Int          @default(3)
+  status          String       @default("ACTIVE") // 'ACTIVE' | 'EXHAUSTED' | 'REVOKED'
+  
+  userId          String?      // Bound user/customer ID when claimed
+  user            User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  claimedAt       DateTime?
+  lastPlayedAt    DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([brandId, code])
+  @@index([code])
+  @@index([status])
 }
