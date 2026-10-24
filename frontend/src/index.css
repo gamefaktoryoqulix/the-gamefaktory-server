@@ -131,26 +131,122 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: 0 0 15px rgba(182, 255, 59, 0.15);
 }
 
+/* Dev / Prod Environment Switcher Styling */
+.env-switcher-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.env-switcher-toggle {
+  display: flex;
+  align-items: center;
+  background: rgba(4, 9, 16, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 3px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.env-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-gray);
+  padding: 6px 14px;
+  font-family: var(--font-primary);
+  font-size: 0.72rem;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.env-toggle-btn:hover {
+  color: var(--color-white);
+}
+
+.env-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  opacity: 0.4;
+}
+
+.env-dot-dev {
+  background: var(--color-solar-lime);
+}
+
+.env-dot-prod {
+  background: var(--color-cyan);
+}
+
+.env-toggle-btn.active-dev {
+  background: rgba(182, 255, 59, 0.15);
+  color: var(--color-solar-lime);
+  border: 1px solid rgba(182, 255, 59, 0.4);
+  box-shadow: 0 0 12px rgba(182, 255, 59, 0.25);
+}
+
+.env-toggle-btn.active-dev .env-dot {
+  opacity: 1;
+  box-shadow: 0 0 8px var(--color-solar-lime);
+}
+
+.env-toggle-btn.active-prod {
+  background: rgba(0, 255, 249, 0.15);
+  color: var(--color-cyan);
+  border: 1px solid rgba(0, 255, 249, 0.4);
+  box-shadow: 0 0 12px rgba(0, 255, 249, 0.25);
+}
+
+.env-toggle-btn.active-prod .env-dot {
+  opacity: 1;
+  box-shadow: 0 0 8px var(--color-cyan);
+}
+
 .header-status-badge {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-family: var(--font-primary);
+  padding: 6px 14px;
+  border-radius: 20px;
+  transition: all 0.3s ease;
+}
+
+.header-status-badge.env-status-dev {
   color: var(--color-solar-lime);
   background: rgba(182, 255, 59, 0.08);
   border: 1px solid rgba(182, 255, 59, 0.25);
-  padding: 6px 14px;
-  border-radius: 20px;
+}
+
+.header-status-badge.env-status-prod {
+  color: var(--color-cyan);
+  background: rgba(0, 255, 249, 0.08);
+  border: 1px solid rgba(0, 255, 249, 0.35);
+  box-shadow: 0 0 15px rgba(0, 255, 249, 0.15);
 }
 
 .status-dot-pulse {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  animation: pulseDot 2s infinite;
+}
+
+.status-dot-pulse.pulse-dev {
   background: var(--color-solar-lime);
   box-shadow: 0 0 10px var(--color-solar-lime);
-  animation: pulseDot 2s infinite;
+}
+
+.status-dot-pulse.pulse-prod {
+  background: var(--color-cyan);
+  box-shadow: 0 0 10px var(--color-cyan);
 }
 
 @keyframes pulseDot {
@@ -159,13 +255,327 @@ h1, h2, h3, h4, h5, h6 {
   100% { transform: scale(0.9); opacity: 0.8; }
 }
 
-/* Console Main Area */
+
+/* Console Main Area - PC Wide Dashboard Layout */
 .console-main-content {
   flex: 1;
-  max-width: 1300px;
+  max-width: 1680px;
   width: 100%;
   margin: 0 auto;
-  padding: 2.5rem 1.5rem;
+  padding: 2rem 2.5rem 3.5rem 2.5rem;
+}
+
+/* Dashboard Hero Banner */
+.dashboard-hero-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.dashboard-hero-title h1 {
+  font-size: 1.75rem;
+  letter-spacing: 1px;
+  color: var(--color-white);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dashboard-hero-title h1 span {
+  color: var(--color-solar-lime);
+}
+
+.dashboard-hero-title p {
+  color: var(--color-gray);
+  font-size: 0.9rem;
+  margin-top: 6px;
+  max-width: 700px;
+  line-height: 1.5;
+}
+
+.dashboard-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-add-brand-prominent {
+  background: var(--color-solar-lime);
+  color: var(--color-circuit-navy);
+  font-family: var(--font-primary);
+  font-weight: bold;
+  font-size: 0.88rem;
+  letter-spacing: 0.8px;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.25s ease;
+  box-shadow: 0 0 20px rgba(182, 255, 59, 0.35);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+
+.btn-add-brand-prominent:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px rgba(182, 255, 59, 0.6);
+  background: #c5ff54;
+}
+
+.btn-add-brand-prominent span {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+/* Quick Metrics Row */
+.dashboard-metrics-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 2.25rem;
+}
+
+.metric-strip-card {
+  background: rgba(8, 16, 26, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 1.2rem 1.4rem;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: all 0.25s ease;
+}
+
+.metric-strip-card:hover {
+  border-color: rgba(182, 255, 59, 0.3);
+  transform: translateY(-2px);
+}
+
+.metric-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.metric-strip-info .metric-num {
+  font-family: var(--font-primary);
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: var(--color-white);
+  line-height: 1.2;
+}
+
+.metric-strip-info .metric-label {
+  font-size: 0.75rem;
+  color: var(--color-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+/* Grid of Brand Cards (PC Wide Layout) */
+.brand-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 1.5rem;
+}
+
+.brand-card-item {
+  background: var(--color-card-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--color-card-border);
+  border-radius: 8px;
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.brand-card-item::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-solar-lime), transparent 60%);
+  opacity: 0.4;
+  transition: opacity 0.3s ease;
+}
+
+.brand-card-item:hover {
+  transform: translateY(-4px);
+  border-color: rgba(182, 255, 59, 0.4);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 25px rgba(182, 255, 59, 0.12);
+}
+
+.brand-card-item:hover::before {
+  opacity: 1;
+}
+
+.brand-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 1.2rem;
+}
+
+.brand-card-title h3 {
+  font-size: 1.15rem;
+  color: var(--color-white);
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+
+.brand-card-slug {
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: var(--color-gray);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: inline-block;
+}
+
+.brand-game-badge {
+  background: rgba(0, 255, 249, 0.1);
+  color: var(--color-cyan);
+  border: 1px solid rgba(0, 255, 249, 0.3);
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-family: var(--font-primary);
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.brand-card-body {
+  margin-bottom: 1.5rem;
+}
+
+.brand-card-admins-list {
+  background: rgba(4, 9, 16, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 1.2rem;
+}
+
+.brand-card-admins-list .section-title {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+
+.brand-card-admins-list .admin-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+  padding: 3px 0;
+}
+
+.brand-card-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.brand-stat-box {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.brand-stat-box .val {
+  font-family: var(--font-primary);
+  font-size: 1.15rem;
+  font-weight: bold;
+  color: var(--color-white);
+}
+
+.brand-stat-box .lbl {
+  font-size: 0.68rem;
+  color: var(--color-gray);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.brand-card-footer {
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+.btn-card-launch {
+  background: transparent;
+  border: 1px solid rgba(182, 255, 59, 0.3);
+  color: var(--color-solar-lime);
+  font-family: var(--font-primary);
+  font-size: 0.75rem;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-card-launch:hover {
+  background: rgba(182, 255, 59, 0.15);
+  border-color: var(--color-solar-lime);
+}
+
+/* Empty State Card */
+.empty-brands-panel {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 5rem 2rem;
+  background: rgba(8, 16, 26, 0.5);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+}
+
+.empty-brands-panel h3 {
+  font-size: 1.3rem;
+  color: var(--color-white);
+  margin-bottom: 8px;
+}
+
+.empty-brands-panel p {
+  color: var(--color-gray);
+  font-size: 0.9rem;
+  margin-bottom: 1.75rem;
 }
 
 /* Glass Cyberpunk Card */
@@ -174,7 +584,7 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(14px);
   border: 1px solid var(--color-card-border);
   box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6);
-  padding: 2rem;
+  padding: 2.25rem;
   border-radius: 8px;
   position: relative;
   transition: all 0.3s ease;

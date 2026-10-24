@@ -23,5 +23,6 @@ COPY . .
 # 8. Expose the port Express listens on
 EXPOSE 5000
 
-# 9. Start the Express server
-CMD ["node", "index.js"]
+# 9. Ensure database schema is synchronized on boot, then start the Express server
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node index.js"]
+
