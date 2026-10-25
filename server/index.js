@@ -6,16 +6,23 @@ const { auth } = require('./auth');
 
 const app = express();
 
-// Middleware
+// Middleware: CORS supporting Localhost, Cloud Domains, and Game Clients
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "http://localhost:5176",
-    /^http:\/\/localhost:\d+$/,
-    /^http:\/\/127\.0\.0\.1:\d+$/
-  ], // Allow requests from any Vite frontend port
+  origin: (origin, callback) => {
+    // Allow non-browser requests or any localhost/127.0.0.1 port
+    if (!origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    // Allow any .gamefaktory.com subdomain (sparkyrun.gamefaktory.com, api.gamefaktory.com, etc.)
+    if (/^https?:\/\/([a-zA-Z0-9-]+\.)*gamefaktory\.com$/.test(origin)) {
+      return callback(null, true);
+    }
+    // Allow sslip.io Coolify internal domains
+    if (/^https?:\/\/.*\.sslip\.io$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Permissive in current game rollout phase
+  },
   credentials: true // Better Auth requires this to securely send session cookies
 })); 
 app.use(express.json()); 
@@ -1214,6 +1221,82 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
   } catch (err) {
     console.error('Fetch brand players error:', err);
     return res.status(500).json({ error: 'Failed to fetch brand players' });
+  }
+});
+
+// 5. Leaderboard Endpoints (Global & Brand-Scoped for Sparky Run Game Client)
+app.get([
+  '/api/leaderboard/global', 
+  '/api/leaderboard', 
+  '/api/brands/:brandSlug/leaderboard',
+  '/api/brands/:brandSlug/games/:gameSlug/leaderboard'
+], async (req, res) => {
+  try {
+    const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || null;
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
+
+    let whereClause = { isCompleted: true };
+    if (brandSlug) {
+      const brandRes = await resolveBrandAndAliases(brandSlug);
+      if (brandRes) {
+        whereClause.brandId = { in: brandRes.brandIds };
+      }
+    }
+
+    // Top scores across completed sessions
+    const topSessions = await prisma.gameSession.findMany({
+      where: whereClause,
+      orderBy: { score: 'desc' },
+      take: limit * 2, // Take extra to deduplicate per user
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            phone: true
+          }
+        },
+        brand: {
+          select: {
+            id: true,
+            slug: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    const userBestMap = new Map();
+    topSessions.forEach((s) => {
+      const uid = s.userId || s.id;
+      if (!userBestMap.has(uid)) {
+        userBestMap.set(uid, {
+          rank: 0,
+          id: s.id,
+          userId: s.userId,
+          name: s.user?.name || 'Sparky Runner',
+          phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
+          score: s.score,
+          duration: s.duration || 0,
+          brand: s.brand?.name || 'Popular Electricals',
+          brandSlug: s.brand?.slug || 'popular',
+          playedAt: s.completedAt || s.startedAt
+        });
+      }
+    });
+
+    const leaderboard = Array.from(userBestMap.values())
+      .slice(0, limit)
+      .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
+
+    return res.json({
+      success: true,
+      count: leaderboard.length,
+      leaderboard
+    });
+  } catch (err) {
+    console.error('[Leaderboard Error]:', err);
+    return res.status(500).json({ error: 'Failed to fetch leaderboard' });
   }
 });
 
