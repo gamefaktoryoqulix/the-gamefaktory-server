@@ -253,6 +253,15 @@ export default function CoreAdminConsole() {
     setTokensError('');
     try {
       const res = await fetch(`${API_BASE_URL}/api/brands/${brandSlug}/tokens`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        if (res.status === 404) {
+          setTokensError(`The server at ${activeConfig.name} does not have the tokens list endpoint deployed yet. Please click Redeploy in Coolify.`);
+        } else {
+          setTokensError(`Server returned HTTP ${res.status}`);
+        }
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         setBrandTokens(data.tokens || []);
@@ -261,7 +270,7 @@ export default function CoreAdminConsole() {
       }
     } catch (err) {
       console.error('Fetch tokens error:', err);
-      setTokensError('Network error while loading tokens');
+      setTokensError(`Network error while loading tokens: ${err.message}`);
     } finally {
       setIsLoadingTokens(false);
     }
@@ -276,6 +285,11 @@ export default function CoreAdminConsole() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ count, prefix, initialLives: 3 })
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        alert(`Server at ${activeConfig.name} returned HTTP ${res.status}. Please ensure latest build is deployed in Coolify.`);
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         fetchBrandTokens(brandSlug);
@@ -285,7 +299,7 @@ export default function CoreAdminConsole() {
       }
     } catch (err) {
       console.error('Token generation error:', err);
-      alert('Network error while creating tokens');
+      alert(`Network error while creating tokens: ${err.message}`);
     } finally {
       setIsGeneratingTokens(false);
     }
