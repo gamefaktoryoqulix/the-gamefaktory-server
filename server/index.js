@@ -1224,18 +1224,43 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
   }
 });
 
-// 5. Leaderboard Endpoints (Global & Brand-Scoped for Sparky Run Game Client)
+// Helper: Calculate Sunday to Saturday window for the current week
+function getWeeklyTimeWindow() {
+  const now = new Date();
+  const day = now.getDay(); // 0 is Sunday, 6 is Saturday
+  
+  // Start of current week: Sunday at 00:00:00.000 UTC
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - day);
+  startOfWeek.setHours(0, 0, 0, 0);
+
+  // End of current week: Saturday at 23:59:59.999 UTC
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+
+  return { startOfWeek, endOfWeek };
+}
+
+// 5a. WEEKLY LEADERBOARD: Sunday to Saturday window, ranked by Highest Single Game Score
 app.get([
-  '/api/leaderboard/global', 
-  '/api/leaderboard', 
-  '/api/brands/:brandSlug/leaderboard',
-  '/api/brands/:brandSlug/games/:gameSlug/leaderboard'
+  '/api/leaderboard/weekly',
+  '/api/brands/:brandSlug/leaderboard/weekly',
+  '/api/brands/:brandSlug/games/:gameSlug/leaderboard/weekly'
 ], async (req, res) => {
   try {
     const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || null;
     const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
+    const { startOfWeek, endOfWeek } = getWeeklyTimeWindow();
 
-    let whereClause = { isCompleted: true };
+    let whereClause = {
+      isCompleted: true,
+      completedAt: {
+        gte: startOfWeek,
+        lte: endOfWeek
+      }
+    };
+
     if (brandSlug) {
       const brandRes = await resolveBrandAndAliases(brandSlug);
       if (brandRes) {
@@ -1243,11 +1268,11 @@ app.get([
       }
     }
 
-    // Top scores across completed sessions
-    const topSessions = await prisma.gameSession.findMany({
+    // Retrieve sessions within this week sorted by highest score
+    const weeklySessions = await prisma.gameSession.findMany({
       where: whereClause,
       orderBy: { score: 'desc' },
-      take: limit * 2, // Take extra to deduplicate per user
+      take: limit * 3, // Overfetch to deduplicate per user and keep their best single score
       include: {
         user: {
           select: {
@@ -1267,7 +1292,7 @@ app.get([
     });
 
     const userBestMap = new Map();
-    topSessions.forEach((s) => {
+    weeklySessions.forEach((s) => {
       const uid = s.userId || s.id;
       if (!userBestMap.has(uid)) {
         userBestMap.set(uid, {
@@ -1276,7 +1301,7 @@ app.get([
           userId: s.userId,
           name: s.user?.name || 'Sparky Runner',
           phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
-          score: s.score,
+          score: s.score, // Highest single game score this week
           duration: s.duration || 0,
           brand: s.brand?.name || 'Popular Electricals',
           brandSlug: s.brand?.slug || 'popular',
@@ -1291,13 +1316,167 @@ app.get([
 
     return res.json({
       success: true,
+      period: 'WEEKLY',
+      weekStart: startOfWeek.toISOString(),
+      weekEnd: endOfWeek.toISOString(),
       count: leaderboard.length,
       leaderboard
     });
   } catch (err) {
-    console.error('[Leaderboard Error]:', err);
-    return res.status(500).json({ error: 'Failed to fetch leaderboard' });
+    console.error('[Weekly Leaderboard Error]:', err);
+    return res.status(500).json({ error: 'Failed to fetch weekly leaderboard' });
   }
+});
+
+// 5b. ALL-TIME LEADERBOARD: Ranked by Cumulative Total Score across all games
+app.get([
+  '/api/leaderboard/all-time',
+  '/api/leaderboard/alltime',
+  '/api/brands/:brandSlug/leaderboard/all-time',
+  '/api/brands/:brandSlug/leaderboard/alltime'
+], async (req, res) => {
+  try {
+    const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || null;
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
+
+    let whereClause = { isCompleted: true };
+    if (brandSlug) {
+      const brandRes = await resolveBrandAndAliases(brandSlug);
+      if (brandRes) {
+        whereClause.brandId = { in: brandRes.brandIds };
+      }
+    }
+
+    // Retrieve all completed game sessions matching brand criteria
+    const allSessions = await prisma.gameSession.findMany({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            phone: true
+          }
+        },
+        brand: {
+          select: {
+            id: true,
+            slug: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    // Aggregate cumulative total score & best score per user
+    const userAggMap = new Map();
+    allSessions.forEach((s) => {
+      const uid = s.userId || s.id;
+      if (!userAggMap.has(uid)) {
+        userAggMap.set(uid, {
+          rank: 0,
+          userId: s.userId,
+          name: s.user?.name || 'Sparky Runner',
+          phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
+          totalScore: s.score,      // Cumulative total score
+          bestScore: s.score,       // Highest single game score
+          gamesPlayed: 1,
+          brand: s.brand?.name || 'Popular Electricals',
+          brandSlug: s.brand?.slug || 'popular',
+          lastPlayedAt: s.completedAt || s.startedAt
+        });
+      } else {
+        const u = userAggMap.get(uid);
+        u.totalScore += s.score;
+        u.bestScore = Math.max(u.bestScore, s.score);
+        u.gamesPlayed += 1;
+        if (s.completedAt && (!u.lastPlayedAt || new Date(s.completedAt) > new Date(u.lastPlayedAt))) {
+          u.lastPlayedAt = s.completedAt;
+        }
+      }
+    });
+
+    // Sort by cumulative totalScore desc, tiebreaker bestScore desc, tiebreaker gamesPlayed
+    const leaderboard = Array.from(userAggMap.values())
+      .sort((a, b) => {
+        if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+        if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
+        return b.gamesPlayed - a.gamesPlayed;
+      })
+      .slice(0, limit)
+      .map((entry, idx) => ({ 
+        ...entry, 
+        rank: idx + 1,
+        score: entry.totalScore // Normalized field for generic frontend score cards
+      }));
+
+    return res.json({
+      success: true,
+      period: 'ALL_TIME',
+      count: leaderboard.length,
+      leaderboard
+    });
+  } catch (err) {
+    console.error('[All-Time Leaderboard Error]:', err);
+    return res.status(500).json({ error: 'Failed to fetch all-time leaderboard' });
+  }
+});
+
+// 5c. Legacy Global Fallback (Defaults to Weekly Leaderboard for backward compatibility)
+app.get([
+  '/api/leaderboard/global', 
+  '/api/leaderboard', 
+  '/api/brands/:brandSlug/leaderboard'
+], async (req, res) => {
+  // Delegate directly to weekly leaderboard handler
+  const { startOfWeek, endOfWeek } = getWeeklyTimeWindow();
+  const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || null;
+  const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
+
+  let whereClause = { isCompleted: true };
+  if (brandSlug) {
+    const brandRes = await resolveBrandAndAliases(brandSlug);
+    if (brandRes) whereClause.brandId = { in: brandRes.brandIds };
+  }
+
+  const topSessions = await prisma.gameSession.findMany({
+    where: whereClause,
+    orderBy: { score: 'desc' },
+    take: limit * 2,
+    include: {
+      user: { select: { id: true, name: true, phone: true } },
+      brand: { select: { id: true, slug: true, name: true } }
+    }
+  });
+
+  const userBestMap = new Map();
+  topSessions.forEach((s) => {
+    const uid = s.userId || s.id;
+    if (!userBestMap.has(uid)) {
+      userBestMap.set(uid, {
+        rank: 0,
+        id: s.id,
+        userId: s.userId,
+        name: s.user?.name || 'Sparky Runner',
+        phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
+        score: s.score,
+        duration: s.duration || 0,
+        brand: s.brand?.name || 'Popular Electricals',
+        brandSlug: s.brand?.slug || 'popular',
+        playedAt: s.completedAt || s.startedAt
+      });
+    }
+  });
+
+  const leaderboard = Array.from(userBestMap.values())
+    .slice(0, limit)
+    .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
+
+  return res.json({
+    success: true,
+    count: leaderboard.length,
+    leaderboard
+  });
 });
 
 // ====================================================
