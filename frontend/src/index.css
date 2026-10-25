@@ -556,6 +556,27 @@ h1, h2, h3, h4, h5, h6 {
   border-color: var(--color-solar-lime);
 }
 
+.btn-card-delete {
+  background: rgba(255, 75, 75, 0.05);
+  border: 1px solid rgba(255, 75, 75, 0.35);
+  color: #ff6b6b;
+  font-family: var(--font-primary);
+  font-size: 0.75rem;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-card-delete:hover {
+  background: rgba(255, 75, 75, 0.2);
+  border-color: #ff4d4d;
+  color: #ffffff;
+}
+
 /* Empty State Card */
 .empty-brands-panel {
   grid-column: 1 / -1;

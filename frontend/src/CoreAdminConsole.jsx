@@ -962,8 +962,7 @@ export default function CoreAdminConsole() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <button
                           type="button"
-                          className="btn-card-launch"
-                          style={{ borderColor: 'rgba(255, 75, 75, 0.3)', color: '#ff6b6b' }}
+                          className="btn-card-delete"
                           onClick={() => handleDeleteBrand(brand.id, brand.name)}
                           title={`Delete ${brand.name} from database`}
                         >

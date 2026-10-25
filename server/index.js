@@ -1372,7 +1372,14 @@ app.get('/api/admin/brands', async (req, res) => {
 app.delete('/api/admin/brands/:brandId', async (req, res) => {
   try {
     const { brandId } = req.params;
-    const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+    const brand = await prisma.brand.findFirst({
+      where: {
+        OR: [
+          { id: brandId },
+          { slug: brandId }
+        ]
+      }
+    });
     if (!brand) return res.status(404).json({ error: 'Brand not found' });
 
     await prisma.$transaction(async (tx) => {
