@@ -2070,12 +2070,11 @@ app.get(['/api/coupons', '/api/brands/:brandSlug/coupons'], async (req, res) => 
 // Endpoint 4: Redeem Coupon (Cashier Checkout Action)
 app.post(['/api/coupons/redeem', '/api/brands/:brandSlug/coupons/redeem'], async (req, res) => {
   try {
-    const brandSlugInput = req.params.brandSlug || req.body.brandSlug || req.body.brand || 'popular-electricals-qatar';
-    const couponCode = (req.body.couponCode || '').trim().toUpperCase();
+    const rawCode = (req.body.couponCode || req.body.code || req.body.couponId || req.body.id || '').trim().toUpperCase();
     const cashierId = req.body.cashierId || req.body.adminId || null;
 
-    if (!couponCode) {
-      return res.status(400).json({ success: false, error: 'Coupon code is required' });
+    if (!rawCode) {
+      return res.status(400).json({ success: false, error: 'Coupon code or ID is required' });
     }
 
     const brandRes = await resolveBrandAndAliases(brandSlugInput);
@@ -2083,12 +2082,24 @@ app.post(['/api/coupons/redeem', '/api/brands/:brandSlug/coupons/redeem'], async
       return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
     }
 
-    // Find coupon by couponCode
-    const coupon = await prisma.rewardCoupon.findUnique({
-      where: { couponCode }
+    // Find coupon by couponCode or id
+    const coupon = await prisma.rewardCoupon.findFirst({
+      where: {
+        OR: [
+          { couponCode: rawCode },
+          { id: rawCode },
+          { id: req.body.id || req.body.couponId || '' }
+        ]
+      }
     });
 
-    if (!coupon || !brandRes.matchesBrandSlug(coupon.brandSlug) && !brandRes.matchesBrandId(coupon.brandSlug)) {
+    if (!coupon) {
+      return res.status(404).json({ success: false, error: `Coupon '${rawCode}' not found` });
+    }
+
+    // Verify brand ownership with proper parentheses
+    const isBrandMatch = brandRes.matchesBrandSlug(coupon.brandSlug) || brandRes.matchesBrandId(coupon.brandSlug);
+    if (!isBrandMatch) {
       return res.status(404).json({ success: false, error: 'Coupon not found for this brand' });
     }
 
