@@ -2070,6 +2070,7 @@ app.get(['/api/coupons', '/api/brands/:brandSlug/coupons'], async (req, res) => 
 // Endpoint 4: Redeem Coupon (Cashier Checkout Action)
 app.post(['/api/coupons/redeem', '/api/brands/:brandSlug/coupons/redeem'], async (req, res) => {
   try {
+    const brandSlugInput = req.params.brandSlug || req.body.brandSlug || req.body.brand || 'popular-electricals-qatar';
     const rawCode = (req.body.couponCode || req.body.code || req.body.couponId || req.body.id || '').trim().toUpperCase();
     const cashierId = req.body.cashierId || req.body.adminId || null;
 
