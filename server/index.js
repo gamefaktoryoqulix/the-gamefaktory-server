@@ -798,22 +798,42 @@ app.get(['/api/brands/:brandSlug/tokens', '/api/tokens'], async (req, res) => {
 // ----------------------------------------------------
 
 // Helper to resolve or provision a player for brand session linkage
-async function resolveSessionUser(userId, phone, brandId) {
+async function resolveSessionUser(userId, phone, brandId, playerName) {
+  const displayName = playerName && playerName.trim() ? playerName.trim() : 'Sparky Runner';
+
   if (userId) {
     const existing = await prisma.user.findUnique({ where: { id: userId } });
-    if (existing) return existing;
+    if (existing) {
+      // If existing user has the fallback name and a real name is now provided, update it:
+      if (existing.name === 'Sparky Runner' && displayName !== 'Sparky Runner') {
+        return await prisma.user.update({
+          where: { id: existing.id },
+          data: { name: displayName },
+        });
+      }
+      return existing;
+    }
   }
+
   if (phone) {
     const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
     const existing = await prisma.user.findUnique({ where: { phone: cleanPhone } });
-    if (existing) return existing;
+    if (existing) {
+      if (existing.name === 'Sparky Runner' && displayName !== 'Sparky Runner') {
+        return await prisma.user.update({
+          where: { id: existing.id },
+          data: { name: displayName },
+        });
+      }
+      return existing;
+    }
 
-    // Create user by phone if registering inline
+    // Create user with real player name:
     return await prisma.user.create({
       data: {
         email: `runner_${cleanPhone}@popular.sparky`,
         phone: cleanPhone,
-        name: 'Sparky Runner',
+        name: displayName,
       },
     });
   }
@@ -825,9 +845,14 @@ async function resolveSessionUser(userId, phone, brandId) {
     guestUser = await prisma.user.create({
       data: {
         email: guestEmail,
-        name: 'Showroom Guest',
+        name: displayName !== 'Sparky Runner' ? displayName : 'Showroom Guest',
         phone: '0000000000',
       },
+    });
+  } else if (displayName !== 'Sparky Runner' && guestUser.name === 'Showroom Guest') {
+    guestUser = await prisma.user.update({
+      where: { id: guestUser.id },
+      data: { name: displayName },
     });
   }
   return guestUser;
@@ -848,6 +873,7 @@ app.post(
       const brandSlug = (req.params.brandSlug || req.body.brand || req.body.brandSlug || 'popular').trim().toLowerCase();
       const userId = req.body.userId || null;
       const phone = req.body.phone || null;
+      const playerName = req.body.name || req.body.playerName || null;
 
       if (!tokenCode) {
         return res.status(400).json({ success: false, error: 'Token is required' });
@@ -889,9 +915,9 @@ app.post(
         });
       }
 
-      // Resolve player linked to this session
+      // Resolve player linked to this session with real name
       const targetUserId = userId || token.userId;
-      const user = await resolveSessionUser(targetUserId, phone, brand.id);
+      const user = await resolveSessionUser(targetUserId, phone, brand.id, playerName);
 
       // Bind token to user if unassigned
       if (!token.userId && user) {
