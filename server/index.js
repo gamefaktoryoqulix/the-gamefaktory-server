@@ -1152,6 +1152,104 @@ app.get(
   }
 );
 
+// 3b. Dedicated Player Brand Stats Endpoint: Highest Score & Cumulative Total Score for the active brand
+app.get([
+  '/api/player/stats',
+  '/api/brands/:brandSlug/player/stats',
+  '/api/brands/:brandSlug/players/:identifier/stats'
+], async (req, res) => {
+  try {
+    const brandSlug = (req.params.brandSlug || req.query.brand || req.query.brandSlug || 'popular').trim().toLowerCase();
+    const identifier = req.params.identifier || req.query.userId || req.query.phone || req.query.token;
+    const phoneQuery = req.query.phone;
+    const tokenQuery = req.query.token;
+    const userIdQuery = req.query.userId;
+
+    const brandRes = await resolveBrandAndAliases(brandSlug);
+    if (!brandRes) return res.status(404).json({ success: false, error: `Brand '${brandSlug}' not found` });
+    const brand = brandRes.primary;
+
+    let user = null;
+
+    // 1. Resolve by userId if valid UUID
+    const targetUserId = userIdQuery || (identifier && identifier.includes('-') && identifier.length === 36 ? identifier : null);
+    if (targetUserId) {
+      user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    }
+
+    // 2. Resolve by phone number
+    if (!user) {
+      const targetPhone = phoneQuery || identifier;
+      if (targetPhone && /\d{7,15}/.test(targetPhone)) {
+        const clean = String(targetPhone).replace(/\D/g, '').slice(-10);
+        user = await prisma.user.findUnique({ where: { phone: clean } });
+      }
+    }
+
+    // 3. Resolve by token code if user is bound to a QR token
+    if (!user) {
+      const targetToken = tokenQuery || identifier;
+      if (targetToken) {
+        const token = await prisma.qrToken.findUnique({
+          where: { code: String(targetToken).trim().toUpperCase() },
+          include: { user: true }
+        });
+        if (token && token.user) {
+          user = token.user;
+        }
+      }
+    }
+
+    // If player has never completed a session or registered yet, return clean zero state
+    if (!user) {
+      return res.json({
+        success: true,
+        brand: brand.slug,
+        brandName: brand.name,
+        player: null,
+        highestScore: 0,
+        bestScore: 0,
+        totalPoints: 0,
+        totalScore: 0,
+        gamesPlayed: 0
+      });
+    }
+
+    // Query all completed sessions strictly for this brand & its aliases
+    const brandSessions = await prisma.gameSession.findMany({
+      where: {
+        userId: user.id,
+        brandId: { in: brandRes.brandIds },
+        isCompleted: true
+      },
+      orderBy: { completedAt: 'desc' }
+    });
+
+    const highestScore = brandSessions.length > 0 ? Math.max(...brandSessions.map(s => s.score)) : 0;
+    const totalPoints = brandSessions.reduce((sum, s) => sum + s.score, 0);
+
+    return res.json({
+      success: true,
+      brand: brand.slug,
+      brandName: brand.name,
+      player: {
+        id: user.id,
+        name: user.name || 'Sparky Runner',
+        phone: user.phone ? (user.phone.startsWith('+') ? user.phone : `+974 ${user.phone}`) : 'N/A'
+      },
+      highestScore,    // Personal best in a single run under this brand
+      bestScore: highestScore,
+      totalPoints,     // Cumulative points/coins gathered under this brand
+      totalScore: totalPoints,
+      gamesPlayed: brandSessions.length,
+      lastPlayedAt: brandSessions.length > 0 ? brandSessions[0].completedAt : null
+    });
+  } catch (error) {
+    console.error('[Player Brand Stats Error]:', error);
+    return res.status(500).json({ success: false, error: 'Failed to retrieve player brand stats' });
+  }
+});
+
 // 4. Admin / Dashboard Endpoint: Fetch All Players Registered/Played for this Brand Only
 app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => {
   try {
