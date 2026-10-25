@@ -1604,6 +1604,313 @@ app.get([
 });
 
 // ====================================================
+// BACKEND-AUTHORITATIVE REWARD COUPONS & REDEMPTION
+// ====================================================
+
+// Authoritative Catalog & Costs
+const BRAND_REWARDS_CATALOG = {
+  'rw_5k':  { title: 'Keychain / Pen / Cap', cost: 5000,  discount: 'STORE GIFT' },
+  'rw_10k': { title: 'Diary',                cost: 10000, discount: 'STORE GIFT' },
+  'rw_16k': { title: 'Diary Box',            cost: 16000, discount: 'STORE GIFT' },
+  'rw_30k': { title: 'Watch / T-Shirt',      cost: 30000, discount: 'STORE GIFT' },
+};
+
+// Endpoint 1: Claim Coupon (User Intent)
+app.post(['/api/coupons/claim', '/api/brands/:brandSlug/coupons/claim'], async (req, res) => {
+  try {
+    const brandSlugInput = req.params.brandSlug || req.body.brandSlug || req.body.brand || 'popular-electricals-qatar';
+    const rewardId = (req.body.rewardId || '').trim();
+    const phone = req.body.phone;
+    const userId = req.body.userId;
+
+    // 1. Validate rewardId against authoritative catalog
+    const reward = BRAND_REWARDS_CATALOG[rewardId];
+    if (!reward) {
+      return res.status(400).json({ success: false, error: 'Invalid reward ID' });
+    }
+
+    // 2. Resolve brand and aliases
+    const brandRes = await resolveBrandAndAliases(brandSlugInput);
+    if (!brandRes) {
+      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
+    }
+    const brand = brandRes.primary;
+
+    // 3. Find player in database by userId or phone
+    let player = null;
+    if (userId) {
+      player = await prisma.user.findUnique({ where: { id: userId } });
+    }
+    if (!player && phone) {
+      const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
+      player = await prisma.user.findUnique({ where: { phone: cleanPhone } });
+    }
+
+    if (!player) {
+      return res.status(404).json({ success: false, error: 'Player record not found. Please play a game or register first.' });
+    }
+
+    // 4. Calculate Total Earned Coins: SUM(score) where user completed sessions for this brand
+    const sessions = await prisma.gameSession.findMany({
+      where: {
+        userId: player.id,
+        brandId: { in: brandRes.brandIds },
+        isCompleted: true
+      },
+      select: { score: true }
+    });
+    const totalEarnedCoins = sessions.reduce((sum, s) => sum + s.score, 0);
+
+    // 5. Calculate Total Already Claimed/Redeemed Coins (status != "CANCELLED")
+    const cleanPhone = player.phone ? String(player.phone).replace(/\D/g, '').slice(-10) : '';
+    const phoneConditions = [];
+    if (player.phone) phoneConditions.push({ customerPhone: player.phone });
+    if (cleanPhone) {
+      phoneConditions.push({ customerPhone: cleanPhone });
+      phoneConditions.push({ customerPhone: `+974 ${cleanPhone}` });
+      phoneConditions.push({ customerPhone: `+974${cleanPhone}` });
+    }
+
+    const wherePlayerCoupons = {
+      brandSlug: { in: [brand.slug, ...brandRes.brandIds] },
+      status: { not: 'CANCELLED' },
+      OR: [
+        { customerId: player.id },
+        ...(phoneConditions.length > 0 ? phoneConditions : [])
+      ]
+    };
+
+    const existingCoupons = await prisma.rewardCoupon.findMany({
+      where: wherePlayerCoupons,
+      select: { redeemedCoins: true }
+    });
+    const totalRedeemedCoins = existingCoupons.reduce((sum, c) => sum + c.redeemedCoins, 0);
+
+    // 6. Compute available balance
+    const availableCoins = totalEarnedCoins - totalRedeemedCoins;
+
+    if (availableCoins < reward.cost) {
+      return res.status(403).json({
+        success: false,
+        error: 'Insufficient coins balance.',
+        requiredCoins: reward.cost,
+        availableCoins
+      });
+    }
+
+    // 7. Generate cryptographically unique coupon code: PET-XXXX-QAT
+    let couponCode = '';
+    let isUnique = false;
+    let attempts = 0;
+    while (!isUnique && attempts < 10) {
+      const randomFour = Math.floor(1000 + Math.random() * 9000);
+      couponCode = `PET-${randomFour}-QAT`;
+      const exists = await prisma.rewardCoupon.findUnique({ where: { couponCode } });
+      if (!exists) isUnique = true;
+      attempts++;
+    }
+
+    // 8. Save new RewardCoupon record
+    const newCoupon = await prisma.rewardCoupon.create({
+      data: {
+        brandSlug: brand.slug,
+        customerId: player.id,
+        customerName: player.name || 'Sparky Runner',
+        customerPhone: player.phone ? (player.phone.startsWith('+') ? player.phone : `+974 ${player.phone}`) : '+974 00000000',
+        rewardId,
+        rewardTitle: reward.title,
+        couponCode,
+        discountValue: reward.discount,
+        redeemedCoins: reward.cost,
+        status: 'PENDING'
+      }
+    });
+
+    return res.status(201).json({
+      success: true,
+      coupon: {
+        id: newCoupon.id,
+        couponCode: newCoupon.couponCode,
+        rewardId: newCoupon.rewardId,
+        rewardTitle: newCoupon.rewardTitle,
+        discountValue: newCoupon.discountValue,
+        redeemedCoins: newCoupon.redeemedCoins,
+        status: newCoupon.status,
+        claimedAt: newCoupon.claimedAt
+      },
+      availableCoins: availableCoins - reward.cost,
+      remainingCoins: availableCoins - reward.cost
+    });
+  } catch (error) {
+    console.error('[Claim Coupon Error]:', error);
+    return res.status(500).json({ success: false, error: 'Failed to claim reward coupon' });
+  }
+});
+
+// Endpoint 2: Get Pending Coupons (User View)
+app.get(['/api/coupons/pending', '/api/brands/:brandSlug/coupons/pending'], async (req, res) => {
+  try {
+    const brandSlugInput = req.params.brandSlug || req.query.brand || req.query.brandSlug || 'popular-electricals-qatar';
+    const phone = req.query.phone;
+    const userId = req.query.userId;
+
+    const brandRes = await resolveBrandAndAliases(brandSlugInput);
+    if (!brandRes) {
+      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
+    }
+
+    const orConditions = [];
+    if (userId) {
+      orConditions.push({ customerId: userId });
+    }
+    if (phone) {
+      const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
+      orConditions.push({ customerPhone: phone });
+      orConditions.push({ customerPhone: cleanPhone });
+      orConditions.push({ customerPhone: `+974 ${cleanPhone}` });
+      orConditions.push({ customerPhone: `+974${cleanPhone}` });
+    }
+
+    if (orConditions.length === 0) {
+      return res.status(400).json({ success: false, error: 'Phone or userId is required' });
+    }
+
+    const coupons = await prisma.rewardCoupon.findMany({
+      where: {
+        brandSlug: { in: [brandRes.primary.slug, ...brandRes.brandIds] },
+        status: 'PENDING',
+        OR: orConditions
+      },
+      orderBy: { claimedAt: 'desc' }
+    });
+
+    return res.json({
+      success: true,
+      brand: brandRes.primary.slug,
+      coupons: coupons.map(c => ({
+        id: c.id,
+        rewardId: c.rewardId,
+        rewardTitle: c.rewardTitle,
+        couponCode: c.couponCode,
+        discountValue: c.discountValue,
+        redeemedCoins: c.redeemedCoins,
+        status: c.status,
+        claimedAt: c.claimedAt
+      }))
+    });
+  } catch (error) {
+    console.error('[Pending Coupons Error]:', error);
+    return res.status(500).json({ success: false, error: 'Failed to fetch pending coupons' });
+  }
+});
+
+// Endpoint 3: Get All Brand Coupons (Admin Dashboard / Cashier View)
+app.get(['/api/coupons', '/api/brands/:brandSlug/coupons'], async (req, res) => {
+  try {
+    const brandSlugInput = req.params.brandSlug || req.query.brand || req.query.brandSlug || 'popular-electricals-qatar';
+    const brandRes = await resolveBrandAndAliases(brandSlugInput);
+    if (!brandRes) {
+      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
+    }
+
+    const coupons = await prisma.rewardCoupon.findMany({
+      where: {
+        brandSlug: { in: [brandRes.primary.slug, ...brandRes.brandIds] }
+      },
+      orderBy: { claimedAt: 'desc' }
+    });
+
+    return res.json({
+      success: true,
+      brand: brandRes.primary.slug,
+      count: coupons.length,
+      coupons: coupons.map(c => ({
+        id: c.id,
+        couponCode: c.couponCode,
+        rewardId: c.rewardId,
+        rewardTitle: c.rewardTitle,
+        customerName: c.customerName,
+        customerPhone: c.customerPhone,
+        redeemedCoins: c.redeemedCoins,
+        status: c.status,
+        claimedAt: c.claimedAt,
+        redeemedAt: c.redeemedAt,
+        redeemedBy: c.redeemedBy
+      }))
+    });
+  } catch (error) {
+    console.error('[Admin Coupons Error]:', error);
+    return res.status(500).json({ success: false, error: 'Failed to retrieve coupons' });
+  }
+});
+
+// Endpoint 4: Redeem Coupon (Cashier Checkout Action)
+app.post(['/api/coupons/redeem', '/api/brands/:brandSlug/coupons/redeem'], async (req, res) => {
+  try {
+    const brandSlugInput = req.params.brandSlug || req.body.brandSlug || req.body.brand || 'popular-electricals-qatar';
+    const couponCode = (req.body.couponCode || '').trim().toUpperCase();
+    const cashierId = req.body.cashierId || req.body.adminId || null;
+
+    if (!couponCode) {
+      return res.status(400).json({ success: false, error: 'Coupon code is required' });
+    }
+
+    const brandRes = await resolveBrandAndAliases(brandSlugInput);
+    if (!brandRes) {
+      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
+    }
+
+    // Find coupon by couponCode
+    const coupon = await prisma.rewardCoupon.findUnique({
+      where: { couponCode }
+    });
+
+    if (!coupon || !brandRes.matchesBrandSlug(coupon.brandSlug) && !brandRes.matchesBrandId(coupon.brandSlug)) {
+      return res.status(404).json({ success: false, error: 'Coupon not found for this brand' });
+    }
+
+    if (coupon.status === 'REDEEMED') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Coupon is already redeemed',
+        redeemedAt: coupon.redeemedAt
+      });
+    }
+
+    if (coupon.status === 'CANCELLED') {
+      return res.status(400).json({ success: false, error: 'Coupon has been cancelled' });
+    }
+
+    // Mark as REDEEMED
+    const updated = await prisma.rewardCoupon.update({
+      where: { id: coupon.id },
+      data: {
+        status: 'REDEEMED',
+        redeemedAt: new Date(),
+        redeemedBy: cashierId
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: 'Coupon marked as REDEEMED successfully.',
+      coupon: {
+        id: updated.id,
+        couponCode: updated.couponCode,
+        rewardTitle: updated.rewardTitle,
+        customerName: updated.customerName,
+        customerPhone: updated.customerPhone,
+        status: updated.status,
+        redeemedAt: updated.redeemedAt
+      }
+    });
+  } catch (error) {
+    console.error('[Redeem Coupon Error]:', error);
+    return res.status(500).json({ success: false, error: 'Failed to redeem coupon' });
+  }
+});
+
+// ====================================================
 // CORE ADMIN & BRAND REGISTRATION MANAGEMENT SYSTEM
 // ====================================================
 

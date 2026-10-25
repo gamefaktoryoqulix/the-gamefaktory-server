@@ -185,3 +185,25 @@ model QrToken {
   @@index([code])
   @@index([status])
 }
+
+model RewardCoupon {
+  id            String    @id @default(cuid())
+  brandSlug     String    // e.g. "popular-electricals-qatar"
+  customerId    String?   // User ID
+  customerName  String    // e.g. "Hussain Al-Ansari"
+  customerPhone String    // e.g. "+974 55123456"
+  rewardId      String    // e.g. "rw_5k", "rw_10k", "rw_16k", "rw_30k"
+  rewardTitle   String    // e.g. "Keychain / Pen / Cap"
+  couponCode    String    @unique // e.g. "PET-8492-QAT"
+  discountValue String?   // e.g. "STORE GIFT"
+  redeemedCoins Int       // Coins cost (e.g. 5000, 10000, 16000, 30000)
+  status        String    @default("PENDING") // "PENDING" | "REDEEMED" | "CANCELLED"
+  claimedAt     DateTime  @default(now())
+  redeemedAt    DateTime?
+  redeemedBy    String?   // Admin / Cashier user ID
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([brandSlug, status])
+  @@index([customerPhone, brandSlug])
+}
