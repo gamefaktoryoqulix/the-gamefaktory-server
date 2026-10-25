@@ -207,3 +207,24 @@ model RewardCoupon {
   @@index([brandSlug, status])
   @@index([customerPhone, brandSlug])
 }
+
+model WeeklyWinner {
+  id            String    @id @default(cuid())
+  brandSlug     String    // e.g. "popular-electricals-qatar"
+  weekLabel     String    // e.g. "19 Oct - 25 Oct 2026"
+  weekStart     DateTime  // Sunday 00:00 AST
+  weekEnd       DateTime  // Saturday 23:59:59 AST
+  winnerUserId  String?
+  winnerName    String    // e.g. "Hussain"
+  winnerPhone   String?   // e.g. "+974 70257079"
+  winningScore  Int       // Highest single game score or total
+  rank          Int       @default(1)
+  claimed       Boolean   @default(false)
+  claimedAt     DateTime?
+  rewardTitle   String?   // e.g. "Weekly Champion Prize"
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([brandSlug, weekStart])
+  @@index([brandSlug, rank])
+}

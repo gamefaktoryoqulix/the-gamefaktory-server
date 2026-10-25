@@ -1376,34 +1376,47 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
   }
 });
 
-// Helper: Calculate Sunday to Saturday window for the current week
-function getWeeklyTimeWindow() {
-  const now = new Date();
-  const day = now.getDay(); // 0 is Sunday, 6 is Saturday
+// Helper: Calculate Qatar AST (UTC+3) current week start (Sunday 00:00:00 AST = Saturday 21:00:00 UTC)
+function getQatarCurrentWeekStart(referenceDate = new Date()) {
+  const qatarOffsetMs = 3 * 60 * 60 * 1000;
+  const qatarTime = new Date(referenceDate.getTime() + qatarOffsetMs);
+  const dayOfWeek = qatarTime.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const hours = qatarTime.getUTCHours();
+  const minutes = qatarTime.getUTCMinutes();
+  const seconds = qatarTime.getUTCSeconds();
+  const ms = qatarTime.getUTCMilliseconds();
+  const elapsedMs = (dayOfWeek * 86400000) + (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + ms;
   
-  // Start of current week: Sunday at 00:00:00.000 UTC
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - day);
-  startOfWeek.setHours(0, 0, 0, 0);
+  // Date representing Sunday 00:00:00 AST in absolute UTC
+  return new Date(referenceDate.getTime() - elapsedMs);
+}
 
-  // End of current week: Saturday at 23:59:59.999 UTC
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 6);
-  endOfWeek.setHours(23, 59, 59, 999);
-
+// Helper: Calculate Sunday 00:00:00 AST to Saturday 23:59:59.999 AST weekly cycle
+function getQatarWeeklyTimeWindow(referenceDate = new Date()) {
+  const startOfWeek = getQatarCurrentWeekStart(referenceDate);
+  const endOfWeek = new Date(startOfWeek.getTime() + (7 * 86400000) - 1); // 6 days, 23:59:59.999
   return { startOfWeek, endOfWeek };
 }
 
-// 5a. WEEKLY LEADERBOARD: Sunday to Saturday window, ranked by Highest Single Game Score
+// Format week label in Qatar AST (e.g., "19 Oct - 25 Oct 2026")
+function formatQatarWeekLabel(startUtc, endUtc) {
+  const qatarOffsetMs = 3 * 60 * 60 * 1000;
+  const qStart = new Date(startUtc.getTime() + qatarOffsetMs);
+  const qEnd = new Date(endUtc.getTime() + qatarOffsetMs);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${qStart.getUTCDate()} ${months[qStart.getUTCMonth()]} - ${qEnd.getUTCDate()} ${months[qEnd.getUTCMonth()]} ${qEnd.getUTCFullYear()}`;
+}
+
+// 5a. WEEKLY LEADERBOARD: Sunday 12:00 AM Qatar Time (AST, UTC+3) window, ranked by Highest Single Game Score
 app.get([
   '/api/leaderboard/weekly',
   '/api/brands/:brandSlug/leaderboard/weekly',
   '/api/brands/:brandSlug/games/:gameSlug/leaderboard/weekly'
 ], async (req, res) => {
   try {
-    const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || null;
+    const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || 'popular-electricals-qatar';
     const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
-    const { startOfWeek, endOfWeek } = getWeeklyTimeWindow();
+    const { startOfWeek, endOfWeek } = getQatarWeeklyTimeWindow();
 
     let whereClause = {
       isCompleted: true,
@@ -1420,7 +1433,7 @@ app.get([
       }
     }
 
-    // Retrieve sessions within this week sorted by highest score
+    // Retrieve sessions within this Qatar week sorted by highest score
     const weeklySessions = await prisma.gameSession.findMany({
       where: whereClause,
       orderBy: { score: 'desc' },
@@ -1469,6 +1482,8 @@ app.get([
     return res.json({
       success: true,
       period: 'WEEKLY',
+      timezone: 'Asia/Qatar (AST, UTC+3)',
+      weekLabel: formatQatarWeekLabel(startOfWeek, endOfWeek),
       weekStart: startOfWeek.toISOString(),
       weekEnd: endOfWeek.toISOString(),
       count: leaderboard.length,
@@ -1479,6 +1494,122 @@ app.get([
     return res.status(500).json({ error: 'Failed to fetch weekly leaderboard' });
   }
 });
+
+// 5a.1 WEEKLY WINNERS ARCHIVE: Fetch previous weekly champions
+app.get([
+  '/api/leaderboard/weekly/winners',
+  '/api/brands/:brandSlug/leaderboard/weekly/winners'
+], async (req, res) => {
+  try {
+    const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || 'popular-electricals-qatar';
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 20), 50);
+
+    const brandRes = await resolveBrandAndAliases(brandSlug);
+    const targetBrandSlugs = brandRes ? [brandRes.primary.slug, ...brandRes.brandSlugs] : [brandSlug];
+
+    const winners = await prisma.weeklyWinner.findMany({
+      where: { brandSlug: { in: targetBrandSlugs } },
+      orderBy: { weekStart: 'desc' },
+      take: limit
+    });
+
+    return res.json({
+      success: true,
+      count: winners.length,
+      winners
+    });
+  } catch (err) {
+    console.error('[Weekly Winners Error]:', err);
+    return res.status(500).json({ error: 'Failed to fetch weekly winners' });
+  }
+});
+
+// Archive Weekly Winner logic: Archives top scorer of the completed week
+async function archiveWeeklyWinnerForBrand(brandSlug = 'popular-electricals-qatar', targetWeekStart) {
+  try {
+    const brandRes = await resolveBrandAndAliases(brandSlug);
+    if (!brandRes) return null;
+
+    // Concluded week starts 7 days prior to targetWeekStart
+    const concludedWeekStart = new Date(targetWeekStart.getTime() - (7 * 86400000));
+    const concludedWeekEnd = new Date(targetWeekStart.getTime() - 1);
+    const weekLabel = formatQatarWeekLabel(concludedWeekStart, concludedWeekEnd);
+
+    // Check if already archived
+    const existing = await prisma.weeklyWinner.findFirst({
+      where: {
+        brandSlug: brandRes.primary.slug,
+        weekStart: concludedWeekStart
+      }
+    });
+    if (existing) {
+      console.log(`[Weekly Winner Archive] Week ${weekLabel} already archived for ${brandRes.primary.slug}`);
+      return existing;
+    }
+
+    // Find top single score session for concluded week
+    const topSession = await prisma.gameSession.findFirst({
+      where: {
+        brandId: { in: brandRes.brandIds },
+        isCompleted: true,
+        completedAt: {
+          gte: concludedWeekStart,
+          lte: concludedWeekEnd
+        }
+      },
+      orderBy: { score: 'desc' },
+      include: { user: true }
+    });
+
+    if (!topSession) {
+      console.log(`[Weekly Winner Archive] No sessions found for week ${weekLabel}`);
+      return null;
+    }
+
+    const winner = await prisma.weeklyWinner.create({
+      data: {
+        brandSlug: brandRes.primary.slug,
+        weekLabel,
+        weekStart: concludedWeekStart,
+        weekEnd: concludedWeekEnd,
+        winnerUserId: topSession.userId,
+        winnerName: topSession.user?.name || 'Sparky Champion',
+        winnerPhone: topSession.user?.phone ? (topSession.user.phone.startsWith('+') ? topSession.user.phone : `+974 ${topSession.user.phone}`) : null,
+        winningScore: topSession.score,
+        rank: 1,
+        rewardTitle: 'Weekly Champion Voucher'
+      }
+    });
+
+    console.log(`[Weekly Winner Archive] Successfully archived winner for ${weekLabel}:`, winner.winnerName, winner.winningScore);
+    return winner;
+  } catch (error) {
+    console.error('[Weekly Winner Archive Error]:', error);
+    return null;
+  }
+}
+
+// Background Cron Scheduler: Checks every 60 seconds for Saturday 21:00 UTC (Sunday 00:00 AST) weekly turnover
+let lastArchivedWeekStartTime = null;
+setInterval(async () => {
+  try {
+    const now = new Date();
+    // Sunday 00:00:00 AST = Saturday 21:00:00 UTC
+    // Trigger window: Saturday UTC between 21:00 and 21:05
+    if (now.getUTCDay() === 6 && now.getUTCHours() === 21 && now.getUTCMinutes() < 5) {
+      const currentWeekStart = getQatarCurrentWeekStart(now);
+      const weekKey = currentWeekStart.toISOString();
+      if (lastArchivedWeekStartTime !== weekKey) {
+        lastArchivedWeekStartTime = weekKey;
+        console.log('[Weekly Turnover Cron] Sunday 00:00 AST reached. Archiving weekly winners...');
+        await archiveWeeklyWinnerForBrand('popular-electricals-qatar', currentWeekStart);
+      }
+    }
+  } catch (cronErr) {
+    console.error('[Weekly Turnover Cron Error]:', cronErr);
+  }
+}, 60000);
+
 
 // 5b. ALL-TIME LEADERBOARD: Ranked by Cumulative Total Score across all games
 app.get([
