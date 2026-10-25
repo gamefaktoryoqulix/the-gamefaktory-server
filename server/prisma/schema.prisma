@@ -32,6 +32,7 @@ model User {
   gameplayCredits GameplayCredit[]
   gameSessions    GameSession[]
   qrTokens        QrToken[]
+  weeklyGiftsWon  WeeklySpecialGift[]
 
   @@index([brandId, role])
 }
@@ -93,6 +94,7 @@ model Brand {
   credits       GameplayCredit[]
   sessions      GameSession[]
   tokens        QrToken[]
+  weeklyGifts   WeeklySpecialGift[]
 }
 
 enum InvoiceStatus {
@@ -227,4 +229,25 @@ model WeeklyWinner {
 
   @@index([brandSlug, weekStart])
   @@index([brandSlug, rank])
+}
+
+model WeeklySpecialGift {
+  id            String    @id @default(cuid())
+  brandSlug     String
+  weekLabel     String    // e.g., "18 Oct - 24 Oct 2026"
+  weekStart     DateTime
+  weekEnd       DateTime
+  giftType      String    @default("LULU_100_QAR")
+  isClaimed     Boolean   @default(false)
+  claimedAt     DateTime?
+  winnerUserId  String?
+  couponCode    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  brand         Brand     @relation(fields: [brandSlug], references: [slug])
+  user          User?     @relation(fields: [winnerUserId], references: [id])
+
+  @@unique([brandSlug, weekLabel, giftType])
+  @@index([brandSlug, isClaimed])
 }

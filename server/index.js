@@ -954,6 +954,71 @@ app.post(
         return { token: updatedToken, session: newSession };
       });
 
+      // Weekly Special Gift: Evaluate LuLu 100 QAR In-Game Special Voucher eligibility
+      let luluGift = { eligible: false };
+      try {
+        const { startOfWeek, endOfWeek } = getQatarWeeklyTimeWindow();
+        const weekLabel = formatQatarWeekLabel(startOfWeek, endOfWeek);
+
+        // Find or create current week record for LuLu gift
+        let weekGift = await prisma.weeklySpecialGift.findFirst({
+          where: {
+            brandSlug: brand.slug,
+            weekStart: { lte: new Date() },
+            weekEnd: { gte: new Date() },
+            giftType: 'LULU_100_QAR'
+          }
+        });
+
+        if (!weekGift) {
+          // Initialize week gift record if not created yet
+          weekGift = await prisma.weeklySpecialGift.create({
+            data: {
+              brandSlug: brand.slug,
+              weekLabel,
+              weekStart: startOfWeek,
+              weekEnd: endOfWeek,
+              giftType: 'LULU_100_QAR',
+              isClaimed: false
+            }
+          }).catch(() => null);
+        }
+
+        if (weekGift && !weekGift.isClaimed) {
+          // Calculate Qatar week elapsed hours
+          const now = new Date();
+          const qatarOffsetMs = 3 * 3600 * 1000;
+          const qatarTime = new Date(now.getTime() + qatarOffsetMs);
+          const dayOfWeek = qatarTime.getUTCDay(); // 0 = Sun, 1 = Mon ...
+          const elapsedHours = (dayOfWeek * 24) + qatarTime.getUTCHours();
+
+          // Pacing probability:
+          // 0% in first 36 hours (Sunday to Monday noon)
+          let probability = 0;
+          if (elapsedHours >= 36 && elapsedHours < 60) {
+            probability = 0.005; // 0.5% chance
+          } else if (elapsedHours >= 60 && elapsedHours < 84) {
+            probability = 0.02;  // 2% chance (Tuesday)
+          } else if (elapsedHours >= 84 && elapsedHours < 120) {
+            probability = 0.05;  // 5% chance (Wednesday / Thursday - Peak)
+          } else if (elapsedHours >= 120) {
+            probability = 0.12;  // 12% chance (Friday / Saturday - Late week boost)
+          }
+
+          if (Math.random() < probability) {
+            const voucherToken = `lulu_${crypto.randomUUID()}`;
+            saveSessionLuluToken(result.session.sessionToken, voucherToken);
+            luluGift = {
+              eligible: true,
+              spawnDistance: 700, // Runner must reach 700m
+              voucherToken: voucherToken
+            };
+          }
+        }
+      } catch (luluErr) {
+        console.error('[LuLu Voucher Evaluation Error]:', luluErr);
+      }
+
       return res.json({
         success: true,
         sessionId: result.session.sessionToken,
@@ -965,6 +1030,7 @@ app.post(
         userId: user.id,
         userName: user.name,
         brand: brand.slug,
+        luluGift // { eligible: boolean, spawnDistance?: number, voucherToken?: string }
       });
     } catch (error) {
       console.error('Start game session error:', error);
@@ -2142,6 +2208,224 @@ app.post(['/api/coupons/redeem', '/api/brands/:brandSlug/coupons/redeem'], async
   } catch (error) {
     console.error('[Redeem Coupon Error]:', error);
     return res.status(500).json({ success: false, error: 'Failed to redeem coupon' });
+  }
+});
+
+// ====================================================
+// WEEKLY RARE IN-GAME LULU 100 QAR SPECIAL VOUCHER
+// ====================================================
+
+// In-memory cache for LuLu voucher tokens with 10-minute TTL
+const sessionLuluTokenMap = new Map();
+
+function saveSessionLuluToken(sessionId, voucherToken) {
+  if (!sessionId || !voucherToken) return;
+  const expiresAt = Date.now() + (10 * 60 * 1000); // 10 minutes
+  sessionLuluTokenMap.set(sessionId, { voucherToken, expiresAt });
+}
+
+function verifySessionLuluToken(sessionId, voucherToken) {
+  if (!sessionId || !voucherToken) return false;
+  const record = sessionLuluTokenMap.get(sessionId);
+  if (!record) return false;
+  if (Date.now() > record.expiresAt) {
+    sessionLuluTokenMap.delete(sessionId);
+    return false;
+  }
+  const isValid = record.voucherToken === voucherToken;
+  if (isValid) {
+    sessionLuluTokenMap.delete(sessionId); // Single-use consumption
+  }
+  return isValid;
+}
+
+// Endpoint 5: Claim LuLu 100 QAR In-Game Special Voucher (Collision Collect)
+app.post([
+  '/api/rewards/claim-lulu',
+  '/api/brands/:brandSlug/rewards/claim-lulu',
+  '/api/coupons/claim-lulu'
+], async (req, res) => {
+  const { sessionId, voucherToken, userId, phone } = req.body;
+  const brandSlugInput = req.params.brandSlug || req.body.brandSlug || req.body.brand || 'popular-electricals-qatar';
+
+  try {
+    const brandRes = await resolveBrandAndAliases(brandSlugInput);
+    if (!brandRes) {
+      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
+    }
+    const brand = brandRes.primary;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Verify single-use token authenticity
+      const valid = verifySessionLuluToken(sessionId, voucherToken);
+      if (!valid) {
+        throw new Error('INVALID_TOKEN');
+      }
+
+      // 2. Lock & check if already claimed this week
+      const now = new Date();
+      const { startOfWeek, endOfWeek } = getQatarWeeklyTimeWindow(now);
+      const weekLabel = formatQatarWeekLabel(startOfWeek, endOfWeek);
+
+      let weekRecord = await tx.weeklySpecialGift.findFirst({
+        where: {
+          brandSlug: brand.slug,
+          weekStart: { lte: now },
+          weekEnd: { gte: now },
+          giftType: 'LULU_100_QAR',
+        }
+      });
+
+      if (weekRecord && weekRecord.isClaimed) {
+        throw new Error('ALREADY_CLAIMED_THIS_WEEK');
+      }
+
+      // 3. Resolve user details
+      let user = null;
+      if (userId) {
+        user = await tx.user.findUnique({ where: { id: userId } });
+      }
+      if (!user && phone) {
+        const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
+        user = await tx.user.findUnique({ where: { phone: cleanPhone } });
+      }
+      if (!user) {
+        user = {
+          id: userId || null,
+          name: req.body.name || req.body.playerName || 'Lucky Runner',
+          phone: phone || null
+        };
+      }
+
+      // 4. Mint unique coupon code: LULU-XXXX-QAT
+      let couponCode = '';
+      let isUnique = false;
+      let attempts = 0;
+      while (!isUnique && attempts < 10) {
+        const codeDigits = Math.floor(1000 + Math.random() * 9000);
+        couponCode = `LULU-${codeDigits}-QAT`;
+        const exists = await tx.rewardCoupon.findUnique({ where: { couponCode } });
+        if (!exists) isUnique = true;
+        attempts++;
+      }
+
+      // 5. Create active RewardCoupon record
+      const coupon = await tx.rewardCoupon.create({
+        data: {
+          brandSlug: brand.slug,
+          customerId: user.id || null,
+          customerName: user.name || 'Valued Customer',
+          customerPhone: user.phone || 'N/A',
+          rewardId: 'rw_lulu_100',
+          rewardTitle: 'LuLu 100 QAR In-Game Special Voucher',
+          couponCode,
+          discountValue: '100 QAR VOUCHER',
+          redeemedCoins: 0, // Free surprise gift!
+          status: 'PENDING',
+        }
+      });
+
+      // 6. Mark week's special gift as claimed
+      if (weekRecord) {
+        await tx.weeklySpecialGift.update({
+          where: { id: weekRecord.id },
+          data: {
+            isClaimed: true,
+            claimedAt: new Date(),
+            winnerUserId: user.id || null,
+            couponCode,
+          }
+        });
+      } else {
+        await tx.weeklySpecialGift.create({
+          data: {
+            brandSlug: brand.slug,
+            weekLabel,
+            weekStart: startOfWeek,
+            weekEnd: endOfWeek,
+            giftType: 'LULU_100_QAR',
+            isClaimed: true,
+            claimedAt: new Date(),
+            winnerUserId: user.id || null,
+            couponCode
+          }
+        });
+      }
+
+      return coupon;
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Congratulations! You claimed the Weekly LuLu 100 QAR Voucher!',
+      coupon: {
+        id: result.id,
+        couponCode: result.couponCode,
+        rewardTitle: result.rewardTitle,
+        discountValue: result.discountValue,
+        customerName: result.customerName,
+        customerPhone: result.customerPhone,
+        status: result.status,
+        claimedAt: result.claimedAt
+      }
+    });
+  } catch (err) {
+    if (err.message === 'ALREADY_CLAIMED_THIS_WEEK') {
+      return res.status(409).json({
+        success: false,
+        error: 'This week’s LuLu gift has already been claimed by another runner.'
+      });
+    }
+    if (err.message === 'INVALID_TOKEN') {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired LuLu voucher token.'
+      });
+    }
+    console.error('[Claim LuLu Error]:', err);
+    return res.status(400).json({ success: false, error: err.message || 'Claim failed' });
+  }
+});
+
+// Endpoint 6: Check LuLu Voucher Weekly Status (Public query)
+app.get([
+  '/api/rewards/lulu-status',
+  '/api/brands/:brandSlug/rewards/lulu-status'
+], async (req, res) => {
+  try {
+    const brandSlugInput = req.params.brandSlug || req.query.brand || req.query.brandSlug || 'popular-electricals-qatar';
+    const brandRes = await resolveBrandAndAliases(brandSlugInput);
+    if (!brandRes) {
+      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
+    }
+
+    const now = new Date();
+    const { startOfWeek, endOfWeek } = getQatarWeeklyTimeWindow(now);
+    const weekLabel = formatQatarWeekLabel(startOfWeek, endOfWeek);
+
+    const weekGift = await prisma.weeklySpecialGift.findFirst({
+      where: {
+        brandSlug: brandRes.primary.slug,
+        weekStart: { lte: now },
+        weekEnd: { gte: now },
+        giftType: 'LULU_100_QAR'
+      },
+      include: {
+        user: { select: { id: true, name: true } }
+      }
+    });
+
+    return res.json({
+      success: true,
+      brand: brandRes.primary.slug,
+      weekLabel,
+      isClaimed: weekGift ? weekGift.isClaimed : false,
+      claimedAt: weekGift?.claimedAt || null,
+      winnerName: weekGift?.user?.name || null
+    });
+  } catch (error) {
+    console.error('[LuLu Status Error]:', error);
+    return res.status(500).json({ success: false, error: 'Failed to retrieve LuLu status' });
   }
 });
 
