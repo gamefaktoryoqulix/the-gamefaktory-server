@@ -159,12 +159,27 @@ export default function CoreAdminConsole() {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'register'
   const [currentStep, setCurrentStep] = useState(1); // 1: Brand Info, 2: Superadmins, 3: Normal Admins (Optional)
   
-  // Brand Detail Modal / Drawer View
+  // Brand Detail View State
   const [selectedBrand, setSelectedBrand] = useState(null);
   const [brandDetailTab, setBrandDetailTab] = useState('overview'); // 'overview' | 'users'
   const [brandPlayers, setBrandPlayers] = useState([]);
   const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
   const [playersError, setPlayersError] = useState('');
+
+  const handleOpenBrandDetails = (brand) => {
+    setSelectedBrand(brand);
+    setBrandDetailTab('overview');
+    setActiveTab('brand-detail');
+    setBrandPlayers([]);
+    fetchBrandPlayers(brand.slug);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleBackToDashboard = () => {
+    setSelectedBrand(null);
+    setActiveTab('dashboard');
+    fetchBrands();
+  };
   
   // Step 1: Brand Info
   const [brandName, setBrandName] = useState('');
@@ -224,16 +239,6 @@ export default function CoreAdminConsole() {
     }
   };
 
-  const handleOpenBrandDetails = (brand) => {
-    setSelectedBrand(brand);
-    setBrandDetailTab('overview');
-    setBrandPlayers([]);
-    fetchBrandPlayers(brand.slug);
-  };
-
-  const handleCloseBrandDetails = () => {
-    setSelectedBrand(null);
-  };
 
   // Delete Single Brand
   const handleDeleteBrand = async (brandId, brandName) => {
@@ -467,11 +472,20 @@ export default function CoreAdminConsole() {
         <nav className="console-nav-tabs">
           <button 
             className={`nav-tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('dashboard'); setSuccessData(null); }}
+            onClick={handleBackToDashboard}
           >
             <Icons.Grid />
             <span>Brand Dashboard</span>
           </button>
+          {selectedBrand && activeTab === 'brand-detail' && (
+            <button 
+              className="nav-tab-btn active"
+              onClick={() => setActiveTab('brand-detail')}
+            >
+              <Icons.Building />
+              <span>{selectedBrand.name}</span>
+            </button>
+          )}
           <button 
             className={`nav-tab-btn ${activeTab === 'register' ? 'active' : ''}`}
             onClick={() => { setActiveTab('register'); setSuccessData(null); }}
@@ -863,7 +877,7 @@ export default function CoreAdminConsole() {
               </form>
             )}
           </div>
-        ) : (
+        ) : activeTab === 'dashboard' ? (
           /* BRAND DASHBOARD VIEW */
           <div>
             {/* Hero Section with Prominent Add Brand Button */}
@@ -1079,39 +1093,69 @@ export default function CoreAdminConsole() {
               </div>
             )}
           </div>
-        )}
+        ) : activeTab === 'brand-detail' && selectedBrand ? (
+          /* FULL PAGE BRAND DETAIL VIEW */
+          <div className="brand-detail-page">
+            {/* Top Action Bar & Breadcrumbs */}
+            <div className="brand-detail-top-bar">
+              <button 
+                type="button" 
+                className="btn-back-link"
+                onClick={handleBackToDashboard}
+              >
+                <Icons.ArrowLeft />
+                <span>BACK TO DASHBOARD</span>
+              </button>
 
-        {/* Brand Detail Modal: Overview & Users Tabs */}
-        {selectedBrand && (
-          <div className="brand-modal-overlay" onClick={handleCloseBrandDetails}>
-            <div className="brand-modal-content" onClick={(e) => e.stopPropagation()}>
-              {/* Modal Header */}
-              <div className="brand-modal-header">
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <h2>{selectedBrand.name}</h2>
-                    <span className="brand-game-badge">
-                      <Icons.Gamepad />
-                      <span>{selectedBrand.gameName || 'Sparky Run'}</span>
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '6px' }}>
-                    <span className="brand-card-slug">{selectedBrand.slug}</span>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>
-                      ID: <code>{selectedBrand.id}</code>
-                    </span>
-                  </div>
-                </div>
-                <button className="brand-modal-close-btn" onClick={handleCloseBrandDetails} title="Close View">
-                  ✕
-                </button>
-              </div>
-
-              {/* Navigation Tabs */}
-              <div className="brand-modal-tabs">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <button
                   type="button"
-                  className={`modal-tab-btn ${brandDetailTab === 'overview' ? 'active' : ''}`}
+                  className="btn-cyber-secondary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  onClick={() => {
+                    window.open(`/?brand=${selectedBrand.slug}`, '_blank');
+                  }}
+                >
+                  <Icons.ExternalLink />
+                  <span>Launch Live Game</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn-card-delete"
+                  style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                  onClick={() => {
+                    handleDeleteBrand(selectedBrand.id, selectedBrand.name);
+                    handleBackToDashboard();
+                  }}
+                >
+                  <Icons.Trash />
+                  <span>Delete Brand</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Hero Brand Header Banner */}
+            <div className="brand-detail-hero">
+              <div className="brand-hero-main">
+                <div className="brand-hero-title-row">
+                  <h1>{selectedBrand.name}</h1>
+                  <span className="brand-game-badge" style={{ fontSize: '0.85rem', padding: '6px 12px' }}>
+                    <Icons.Gamepad />
+                    <span>{selectedBrand.gameName || 'Sparky Run'}</span>
+                  </span>
+                </div>
+                <div className="brand-hero-meta-row">
+                  <span className="brand-card-slug">{selectedBrand.slug}</span>
+                  <span className="meta-text">Tenant ID: <code>{selectedBrand.id}</code></span>
+                  <span className="meta-text">Joined: {new Date(selectedBrand.createdAt).toLocaleDateString()}</span>
+                </div>
+              </div>
+
+              {/* Sub-Navigation Tabs: Overview vs Users */}
+              <div className="brand-page-tabs">
+                <button
+                  type="button"
+                  className={`brand-page-tab-btn ${brandDetailTab === 'overview' ? 'active' : ''}`}
                   onClick={() => setBrandDetailTab('overview')}
                 >
                   <Icons.Building />
@@ -1119,192 +1163,125 @@ export default function CoreAdminConsole() {
                 </button>
                 <button
                   type="button"
-                  className={`modal-tab-btn ${brandDetailTab === 'users' ? 'active' : ''}`}
+                  className={`brand-page-tab-btn ${brandDetailTab === 'users' ? 'active' : ''}`}
                   onClick={() => setBrandDetailTab('users')}
                 >
                   <Icons.Users />
                   <span>Users / Players ({brandPlayers.length})</span>
                 </button>
               </div>
+            </div>
 
-              {/* Modal Body */}
-              <div className="brand-modal-body">
-                {/* TAB 1: OVERVIEW */}
-                {brandDetailTab === 'overview' && (
-                  <div>
-                    {/* Metrics Overview Cards */}
-                    <div className="brand-card-stats-grid" style={{ marginBottom: '1.75rem', gridTemplateColumns: 'repeat(4, 1fr)' }}>
-                      <div className="brand-stat-box">
-                        <div className="val">{selectedBrand._count?.tokens || 0}</div>
-                        <div className="lbl">Tokens Issued</div>
-                      </div>
-                      <div className="brand-stat-box">
-                        <div className="val">{selectedBrand._count?.sessions || 0}</div>
-                        <div className="lbl">Total Plays</div>
-                      </div>
-                      <div className="brand-stat-box">
-                        <div className="val">{selectedBrand.admins?.length || 0}</div>
-                        <div className="lbl">Administrators</div>
-                      </div>
-                      <div className="brand-stat-box">
-                        <div className="val">{brandPlayers.length}</div>
-                        <div className="lbl">Registered Players</div>
-                      </div>
+            {/* TAB CONTENT 1: OVERVIEW */}
+            {brandDetailTab === 'overview' && (
+              <div className="brand-page-content-wrapper">
+                {/* 4 Metric Cards Strip */}
+                <div className="dashboard-metrics-strip" style={{ marginBottom: '2rem' }}>
+                  <div className="metric-strip-card">
+                    <div className="metric-icon-box" style={{ color: 'var(--color-amber)' }}>
+                      <Icons.Ticket />
                     </div>
-
-                    {/* API Keys & Webhook Config */}
-                    <div className="detail-section-block">
-                      <div className="section-title">
-                        <Icons.Key />
-                        <span>INTEGRATION CREDENTIALS & SECRETS</span>
-                      </div>
-                      <div className="credential-row">
-                        <span className="cred-label">API Key:</span>
-                        <code className="cred-val">{selectedBrand.apiKey || `gf_live_${selectedBrand.slug}_key`}</code>
-                      </div>
-                      <div className="credential-row">
-                        <span className="cred-label">Webhook Secret:</span>
-                        <code className="cred-val">{selectedBrand.webhookSecret || `gf_whsec_${selectedBrand.slug}_secret`}</code>
-                      </div>
-                      <div className="credential-row">
-                        <span className="cred-label">Public Launch URL:</span>
-                        <code className="cred-val" style={{ color: 'var(--color-solar-lime)' }}>
-                          {window.location.origin}/?brand={selectedBrand.slug}
-                        </code>
-                      </div>
-                    </div>
-
-                    {/* Admin Roster Section */}
-                    <div className="detail-section-block">
-                      <div className="section-title">
-                        <Icons.Shield />
-                        <span>ASSIGNED ADMINISTRATORS & CREDENTIALS</span>
-                      </div>
-                      {selectedBrand.admins && selectedBrand.admins.length > 0 ? (
-                        <div className="admins-table-wrapper">
-                          <table className="cyber-table">
-                            <thead>
-                              <tr>
-                                <th>Name / Username</th>
-                                <th>Email / Identifier</th>
-                                <th>Role</th>
-                                <th>Created</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {selectedBrand.admins.map((adm) => (
-                                <tr key={adm.id}>
-                                  <td>
-                                    <strong>{adm.name || adm.username}</strong>
-                                    {adm.username && <div style={{ fontSize: '0.75rem', color: 'var(--color-gray)' }}>@{adm.username}</div>}
-                                  </td>
-                                  <td>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <Icons.Mail />
-                                      <span>{adm.email || 'N/A'}</span>
-                                    </div>
-                                  </td>
-                                  <td>
-                                    <span className={`role-pill-badge ${adm.role === 'SUPERADMIN' ? 'super' : 'admin'}`}>
-                                      {adm.role}
-                                    </span>
-                                  </td>
-                                  <td>{new Date(adm.createdAt).toLocaleDateString()}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="empty-sub-panel">No administrators currently assigned to this brand.</div>
-                      )}
+                    <div className="metric-strip-info">
+                      <div className="metric-num">{selectedBrand._count?.tokens || 0}</div>
+                      <div className="metric-label">Tokens Issued</div>
                     </div>
                   </div>
-                )}
 
-                {/* TAB 2: USERS / PLAYERS */}
-                {brandDetailTab === 'users' && (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                      <div style={{ fontSize: '0.85rem', color: 'var(--color-gray)' }}>
-                        Players who have registered, claimed tokens, or completed gameplay sessions under <strong>{selectedBrand.name}</strong>.
-                      </div>
-                      <button
-                        type="button"
-                        className="btn-cyber-secondary"
-                        style={{ padding: '4px 12px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-                        onClick={() => fetchBrandPlayers(selectedBrand.slug)}
-                        disabled={isLoadingPlayers}
-                      >
-                        <Icons.Refresh spinning={isLoadingPlayers} />
-                        <span>{isLoadingPlayers ? 'Refreshing...' : 'Refresh Users'}</span>
-                      </button>
+                  <div className="metric-strip-card">
+                    <div className="metric-icon-box" style={{ color: 'var(--color-cyan)' }}>
+                      <Icons.Gamepad />
+                    </div>
+                    <div className="metric-strip-info">
+                      <div className="metric-num">{selectedBrand._count?.sessions || 0}</div>
+                      <div className="metric-label">Gameplay Sessions</div>
+                    </div>
+                  </div>
+
+                  <div className="metric-strip-card">
+                    <div className="metric-icon-box" style={{ color: 'var(--color-magenta)' }}>
+                      <Icons.Shield />
+                    </div>
+                    <div className="metric-strip-info">
+                      <div className="metric-num">{selectedBrand.admins?.length || 0}</div>
+                      <div className="metric-label">Authorized Admins</div>
+                    </div>
+                  </div>
+
+                  <div className="metric-strip-card">
+                    <div className="metric-icon-box" style={{ color: 'var(--color-solar-lime)' }}>
+                      <Icons.Users />
+                    </div>
+                    <div className="metric-strip-info">
+                      <div className="metric-num">{brandPlayers.length}</div>
+                      <div className="metric-label">Registered Players</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2-Column Layout: Credentials & Game Link | Admin Roster */}
+                <div className="brand-detail-grid-2">
+                  {/* Left Column: API Credentials & Configuration */}
+                  <div className="cyber-card">
+                    <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-cyan)', marginBottom: '1.25rem', fontFamily: 'var(--font-primary)', fontSize: '0.85rem' }}>
+                      <Icons.Key />
+                      <span>DEVELOPER CREDENTIALS & SECRETS</span>
                     </div>
 
-                    {isLoadingPlayers ? (
-                      <div className="empty-sub-panel" style={{ padding: '3rem' }}>
-                        <div className="status-dot-pulse" style={{ margin: '0 auto 10px auto' }}></div>
-                        <div>Loading brand players from {activeConfig.badgeText}...</div>
-                      </div>
-                    ) : playersError ? (
-                      <div className="error-alert-banner" style={{ margin: '1rem 0' }}>
-                        <Icons.AlertTriangle />
-                        <span>{playersError}</span>
-                      </div>
-                    ) : brandPlayers.length === 0 ? (
-                      <div className="empty-sub-panel" style={{ padding: '3rem' }}>
-                        <div style={{ color: 'var(--color-gray)', marginBottom: '8px' }}>
-                          <Icons.Users />
-                        </div>
-                        <h4 style={{ color: 'var(--color-white)', marginBottom: '4px' }}>No Players Yet for {selectedBrand.name}</h4>
-                        <p style={{ color: 'var(--color-muted)', fontSize: '0.85rem', margin: 0 }}>
-                          Players will automatically appear here as soon as they scan a QR code, register, or play a game.
-                        </p>
-                      </div>
-                    ) : (
+                    <div className="credential-row">
+                      <span className="cred-label">API Key:</span>
+                      <code className="cred-val">{selectedBrand.apiKey || `gf_live_${selectedBrand.slug}_key`}</code>
+                    </div>
+
+                    <div className="credential-row">
+                      <span className="cred-label">Webhook Secret:</span>
+                      <code className="cred-val">{selectedBrand.webhookSecret || `gf_whsec_${selectedBrand.slug}_secret`}</code>
+                    </div>
+
+                    <div className="credential-row">
+                      <span className="cred-label">Public Launch URL:</span>
+                      <code className="cred-val" style={{ color: 'var(--color-solar-lime)' }}>
+                        {window.location.origin}/?brand={selectedBrand.slug}
+                      </code>
+                    </div>
+
+                    <div style={{ marginTop: '1.5rem', padding: '12px 14px', background: 'rgba(0,0,0,0.3)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem', color: 'var(--color-gray)' }}>
+                      Provide the API key to your Unity / WebGL game build client or POS webhooks to authenticate gameplay sessions directly under <strong>{selectedBrand.slug}</strong>.
+                    </div>
+                  </div>
+
+                  {/* Right Column: Admin Roster */}
+                  <div className="cyber-card">
+                    <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-solar-lime)', marginBottom: '1.25rem', fontFamily: 'var(--font-primary)', fontSize: '0.85rem' }}>
+                      <Icons.Shield />
+                      <span>ASSIGNED ADMINISTRATORS ({selectedBrand.admins?.length || 0})</span>
+                    </div>
+
+                    {selectedBrand.admins && selectedBrand.admins.length > 0 ? (
                       <div className="admins-table-wrapper">
                         <table className="cyber-table">
                           <thead>
                             <tr>
-                              <th>Player Name</th>
-                              <th>Phone Number</th>
-                              <th>Games Played</th>
-                              <th>Best Score</th>
-                              <th>Total Score</th>
-                              <th>Location / Showroom</th>
+                              <th>Admin</th>
+                              <th>Email</th>
+                              <th>Role</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {brandPlayers.map((player) => (
-                              <tr key={player.id}>
+                            {selectedBrand.admins.map((adm) => (
+                              <tr key={adm.id}>
                                 <td>
-                                  <strong>{player.name || 'Sparky Runner'}</strong>
-                                  <div style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>ID: {player.id.slice(0, 8)}...</div>
+                                  <strong>{adm.name || adm.username}</strong>
+                                  {adm.username && <div style={{ fontSize: '0.75rem', color: 'var(--color-gray)' }}>@{adm.username}</div>}
                                 </td>
                                 <td>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--color-cyan)' }}>
-                                    <Icons.Phone />
-                                    <span>{player.fullPhone || player.phone || 'N/A'}</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <Icons.Mail />
+                                    <span>{adm.email || 'N/A'}</span>
                                   </div>
                                 </td>
                                 <td>
-                                  <span style={{ fontWeight: 'bold', color: 'var(--color-white)' }}>
-                                    {player.gamesPlayed || 0}
-                                  </span>
-                                </td>
-                                <td>
-                                  <span style={{ color: 'var(--color-solar-lime)', fontWeight: 'bold' }}>
-                                    {player.bestScore || 0}
-                                  </span>
-                                </td>
-                                <td>
-                                  <span style={{ color: 'var(--color-amber)', fontWeight: 'bold' }}>
-                                    {player.totalScore || 0}
-                                  </span>
-                                </td>
-                                <td>
-                                  <span style={{ fontSize: '0.8rem', color: 'var(--color-gray)' }}>
-                                    {player.showroom || 'Showroom'}
+                                  <span className={`role-pill-badge ${adm.role === 'SUPERADMIN' ? 'super' : 'admin'}`}>
+                                    {adm.role}
                                   </span>
                                 </td>
                               </tr>
@@ -1312,13 +1289,121 @@ export default function CoreAdminConsole() {
                           </tbody>
                         </table>
                       </div>
+                    ) : (
+                      <div className="empty-sub-panel">No administrators currently assigned to this brand.</div>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT 2: USERS / PLAYERS */}
+            {brandDetailTab === 'users' && (
+              <div className="cyber-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '12px' }}>
+                  <div>
+                    <h3 style={{ margin: '0 0 4px 0', color: 'var(--color-white)', fontSize: '1.15rem' }}>
+                      Registered Players & Active Runners
+                    </h3>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--color-gray)' }}>
+                      Players who have scanned QR tokens, registered with phone numbers, or completed gameplay sessions under <strong>{selectedBrand.name}</strong>.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-cyber-secondary"
+                    style={{ padding: '6px 14px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    onClick={() => fetchBrandPlayers(selectedBrand.slug)}
+                    disabled={isLoadingPlayers}
+                  >
+                    <Icons.Refresh spinning={isLoadingPlayers} />
+                    <span>{isLoadingPlayers ? 'Refreshing...' : 'Refresh Users'}</span>
+                  </button>
+                </div>
+
+                {isLoadingPlayers ? (
+                  <div className="empty-sub-panel" style={{ padding: '4rem 2rem' }}>
+                    <div className="status-dot-pulse" style={{ margin: '0 auto 12px auto' }}></div>
+                    <h4 style={{ color: 'var(--color-white)', marginBottom: '4px' }}>Loading Brand Players...</h4>
+                    <p style={{ color: 'var(--color-gray)', margin: 0 }}>Retrieving player telemetry from {activeConfig.badgeText}</p>
+                  </div>
+                ) : playersError ? (
+                  <div className="error-alert-banner" style={{ margin: '1rem 0' }}>
+                    <Icons.AlertTriangle />
+                    <span>{playersError}</span>
+                  </div>
+                ) : brandPlayers.length === 0 ? (
+                  <div className="empty-sub-panel" style={{ padding: '4rem 2rem' }}>
+                    <div style={{ color: 'var(--color-gray)', marginBottom: '12px' }}>
+                      <Icons.Users />
+                    </div>
+                    <h3 style={{ color: 'var(--color-white)', marginBottom: '6px' }}>No Players Registered Yet</h3>
+                    <p style={{ color: 'var(--color-muted)', fontSize: '0.88rem', maxWidth: '500px', margin: '0 auto' }}>
+                      When customers scan a POS QR voucher or launch Sparky Run for <strong>{selectedBrand.name}</strong>, their phone number, game counts, and high scores will immediately populate this live roster.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="admins-table-wrapper">
+                    <table className="cyber-table">
+                      <thead>
+                        <tr>
+                          <th>Player Name & ID</th>
+                          <th>Phone Number</th>
+                          <th>Games Played</th>
+                          <th>Best Score</th>
+                          <th>Total Score</th>
+                          <th>Showroom / Location</th>
+                          <th>Last Active</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {brandPlayers.map((player) => (
+                          <tr key={player.id}>
+                            <td>
+                              <strong>{player.name || 'Sparky Runner'}</strong>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>ID: {player.id.slice(0, 8)}...</div>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--color-cyan)', fontWeight: 500 }}>
+                                <Icons.Phone />
+                                <span>{player.fullPhone || player.phone || 'N/A'}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <span style={{ fontWeight: 'bold', color: 'var(--color-white)', fontSize: '1rem' }}>
+                                {player.gamesPlayed || 0}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ color: 'var(--color-solar-lime)', fontWeight: 'bold', fontSize: '1.05rem' }}>
+                                {player.bestScore || 0}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ color: 'var(--color-amber)', fontWeight: 'bold', fontSize: '1.05rem' }}>
+                                {player.totalScore || 0}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--color-gray)' }}>
+                                {player.showroom || 'Showroom'}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>
+                                {player.lastPlayed ? new Date(player.lastPlayed).toLocaleDateString() : 'N/A'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
-            </div>
+            )}
           </div>
-        )}
+        ) : null}
       </main>
     </div>
   );

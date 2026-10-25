@@ -968,116 +968,139 @@ h1, h2, h3, h4, h5, h6 {
   cursor: pointer;
 }
 
-/* Brand Details Modal Overlay */
-.brand-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(3, 7, 13, 0.82);
-  backdrop-filter: blur(12px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  animation: fadeIn 0.2s ease-out;
+/* ===================================================
+   BRAND DETAIL FULL PAGE STYLES
+   =================================================== */
+.brand-detail-page {
+  animation: fadeIn 0.25s ease-out;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-.brand-modal-content {
-  background: var(--color-circuit-navy);
-  border: 1px solid rgba(182, 255, 59, 0.35);
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 40px rgba(182, 255, 59, 0.1);
-  border-radius: 10px;
-  width: 100%;
-  max-width: 1000px;
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
-}
-
-.brand-modal-header {
-  padding: 1.5rem 2rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+.brand-detail-top-bar {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  background: rgba(4, 9, 16, 0.7);
-}
-
-.brand-modal-header h2 {
-  font-size: 1.4rem;
-  color: var(--color-white);
-  margin: 0;
-}
-
-.brand-modal-close-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--color-gray);
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
   align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  font-size: 0.9rem;
+  margin-bottom: 1.75rem;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
-.brand-modal-close-btn:hover {
-  background: rgba(255, 75, 75, 0.2);
-  color: #ff6b6b;
-  border-color: #ff6b6b;
-}
-
-/* Modal Tabs */
-.brand-modal-tabs {
-  display: flex;
-  background: rgba(0, 0, 0, 0.35);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 0 2rem;
-  gap: 10px;
-}
-
-.modal-tab-btn {
+.btn-back-link {
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
   color: var(--color-gray);
   font-family: var(--font-primary);
-  font-size: 0.85rem;
-  padding: 12px 18px;
+  font-size: 0.82rem;
+  letter-spacing: 0.8px;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 6px 0;
   transition: all 0.2s ease;
 }
 
-.modal-tab-btn:hover {
+.btn-back-link:hover {
+  color: var(--color-solar-lime);
+  transform: translateX(-3px);
+}
+
+.brand-detail-hero {
+  background: linear-gradient(135deg, rgba(8, 20, 36, 0.9), rgba(4, 9, 16, 0.95));
+  border: 1px solid var(--color-card-border);
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.brand-detail-hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--color-solar-lime), var(--color-cyan) 60%, transparent);
+}
+
+.brand-hero-main {
+  padding: 2.25rem 2.5rem 1.5rem 2.5rem;
+}
+
+.brand-hero-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.brand-hero-title-row h1 {
+  font-size: 2rem;
+  color: var(--color-white);
+  margin: 0;
+  letter-spacing: 0.5px;
+}
+
+.brand-hero-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.meta-text {
+  color: var(--color-muted);
+}
+
+.brand-page-tabs {
+  display: flex;
+  background: rgba(0, 0, 0, 0.4);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0 2.5rem;
+  gap: 12px;
+}
+
+.brand-page-tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--color-gray);
+  font-family: var(--font-primary);
+  font-size: 0.9rem;
+  padding: 16px 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.2s ease;
+}
+
+.brand-page-tab-btn:hover {
   color: var(--color-white);
 }
 
-.modal-tab-btn.active {
+.brand-page-tab-btn.active {
   color: var(--color-solar-lime);
   border-bottom-color: var(--color-solar-lime);
   font-weight: 600;
+  background: rgba(182, 255, 59, 0.04);
 }
 
-.brand-modal-body {
-  padding: 2rem;
-  overflow-y: auto;
-  flex: 1;
+.brand-page-content-wrapper {
+  margin-top: 0.5rem;
+}
+
+.brand-detail-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .brand-detail-grid-2 {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Detail Section Block */
