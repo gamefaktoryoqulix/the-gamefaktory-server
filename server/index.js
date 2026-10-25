@@ -1226,7 +1226,33 @@ app.get([
     });
 
     const highestScore = brandSessions.length > 0 ? Math.max(...brandSessions.map(s => s.score)) : 0;
-    const totalPoints = brandSessions.reduce((sum, s) => sum + s.score, 0);
+    const grossEarnedCoins = brandSessions.reduce((sum, s) => sum + s.score, 0);
+
+    // Calculate redeemed/claimed coupon costs for this brand (status != 'CANCELLED')
+    const cleanPhone = user.phone ? String(user.phone).replace(/\D/g, '').slice(-10) : '';
+    const phoneConditions = [];
+    if (user.phone) phoneConditions.push({ customerPhone: user.phone });
+    if (cleanPhone) {
+      phoneConditions.push({ customerPhone: cleanPhone });
+      phoneConditions.push({ customerPhone: `+974 ${cleanPhone}` });
+      phoneConditions.push({ customerPhone: `+974${cleanPhone}` });
+    }
+
+    const wherePlayerCoupons = {
+      brandSlug: { in: [brand.slug, ...brandRes.brandIds] },
+      status: { not: 'CANCELLED' },
+      OR: [
+        { customerId: user.id },
+        ...(phoneConditions.length > 0 ? phoneConditions : [])
+      ]
+    };
+
+    const claimedCoupons = await prisma.rewardCoupon.findMany({
+      where: wherePlayerCoupons,
+      select: { redeemedCoins: true }
+    });
+    const totalRedeemedCoins = claimedCoupons.reduce((sum, c) => sum + c.redeemedCoins, 0);
+    const netAvailableCoins = Math.max(0, grossEarnedCoins - totalRedeemedCoins);
 
     return res.json({
       success: true,
@@ -1239,8 +1265,10 @@ app.get([
       },
       highestScore,    // Personal best in a single run under this brand
       bestScore: highestScore,
-      totalPoints,     // Cumulative points/coins gathered under this brand
-      totalScore: totalPoints,
+      totalPoints: netAvailableCoins,     // Net spendable points/coins gathered under this brand
+      totalScore: netAvailableCoins,
+      grossEarnedCoins,                   // All-time gross coins earned before redemptions
+      totalRedeemedCoins,                 // Total coins spent on claimed coupons
       gamesPlayed: brandSessions.length,
       lastPlayedAt: brandSessions.length > 0 ? brandSessions[0].completedAt : null
     });
@@ -1492,6 +1520,38 @@ app.get([
       }
     });
 
+    // Retrieve all claimed/active coupons for this brand to subtract from totalScore
+    let brandCouponWhere = { status: { not: 'CANCELLED' } };
+    if (brandSlug) {
+      const brandRes = await resolveBrandAndAliases(brandSlug);
+      if (brandRes) {
+        brandCouponWhere.brandSlug = { in: [brandRes.primary.slug, ...brandRes.brandIds] };
+      }
+    }
+
+    const claimedCoupons = await prisma.rewardCoupon.findMany({
+      where: brandCouponWhere,
+      select: {
+        customerId: true,
+        customerPhone: true,
+        redeemedCoins: true
+      }
+    });
+
+    // Map deductions by customerId and cleaned customerPhone
+    const userCouponDeductions = new Map();
+    claimedCoupons.forEach((c) => {
+      if (c.customerId) {
+        userCouponDeductions.set(c.customerId, (userCouponDeductions.get(c.customerId) || 0) + c.redeemedCoins);
+      }
+      if (c.customerPhone) {
+        const cleanP = String(c.customerPhone).replace(/\D/g, '').slice(-10);
+        if (cleanP) {
+          userCouponDeductions.set(cleanP, (userCouponDeductions.get(cleanP) || 0) + c.redeemedCoins);
+        }
+      }
+    });
+
     // Aggregate cumulative total score & best score per user
     const userAggMap = new Map();
     allSessions.forEach((s) => {
@@ -1502,7 +1562,9 @@ app.get([
           userId: s.userId,
           name: s.user?.name || 'Sparky Runner',
           phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
-          totalScore: s.score,      // Cumulative total score
+          rawPhone: s.user?.phone || null,
+          grossScore: s.score,     // Gross coins earned
+          totalScore: s.score,      // Net spendable total score (will be deducted below)
           bestScore: s.score,       // Highest single game score
           gamesPlayed: 1,
           brand: s.brand?.name || 'Popular Electricals',
@@ -1511,7 +1573,7 @@ app.get([
         });
       } else {
         const u = userAggMap.get(uid);
-        u.totalScore += s.score;
+        u.grossScore += s.score;
         u.bestScore = Math.max(u.bestScore, s.score);
         u.gamesPlayed += 1;
         if (s.completedAt && (!u.lastPlayedAt || new Date(s.completedAt) > new Date(u.lastPlayedAt))) {
@@ -1520,9 +1582,31 @@ app.get([
       }
     });
 
-    // Sort by cumulative totalScore desc, tiebreaker bestScore desc, tiebreaker gamesPlayed
+    // Subtract redeemed coupon costs: player.totalScore = grossScore - totalRedeemedCoins
+    userAggMap.forEach((entry) => {
+      let deductedCoins = 0;
+      if (entry.userId && userCouponDeductions.has(entry.userId)) {
+        deductedCoins = userCouponDeductions.get(entry.userId);
+      } else if (entry.rawPhone) {
+        const cleanP = String(entry.rawPhone).replace(/\D/g, '').slice(-10);
+        if (cleanP && userCouponDeductions.has(cleanP)) {
+          deductedCoins = userCouponDeductions.get(cleanP);
+        }
+      }
+      entry.redeemedCoins = deductedCoins;
+      entry.totalScore = Math.max(0, entry.grossScore - deductedCoins);
+      delete entry.rawPhone;
+    });
+
+    // Sort: Net totalScore desc; players with >0 score come first, 0-score players placed at the bottom.
+    // Tiebreaker: bestScore desc, then gamesPlayed desc.
     const leaderboard = Array.from(userAggMap.values())
       .sort((a, b) => {
+        // Place players who still have available score ahead of players with 0 remaining score
+        const aHasScore = a.totalScore > 0 ? 1 : 0;
+        const bHasScore = b.totalScore > 0 ? 1 : 0;
+        if (bHasScore !== aHasScore) return bHasScore - aHasScore;
+
         if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
         if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
         return b.gamesPlayed - a.gamesPlayed;
