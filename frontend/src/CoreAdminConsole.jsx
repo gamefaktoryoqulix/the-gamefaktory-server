@@ -161,17 +161,25 @@ export default function CoreAdminConsole() {
   
   // Brand Detail View State
   const [selectedBrand, setSelectedBrand] = useState(null);
-  const [brandDetailTab, setBrandDetailTab] = useState('overview'); // 'overview' | 'users'
+  const [brandDetailTab, setBrandDetailTab] = useState('overview'); // 'overview' | 'users' | 'tokens'
   const [brandPlayers, setBrandPlayers] = useState([]);
   const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
   const [playersError, setPlayersError] = useState('');
+  
+  // Brand Tokens State
+  const [brandTokens, setBrandTokens] = useState([]);
+  const [isLoadingTokens, setIsLoadingTokens] = useState(false);
+  const [tokensError, setTokensError] = useState('');
+  const [isGeneratingTokens, setIsGeneratingTokens] = useState(false);
 
   const handleOpenBrandDetails = (brand) => {
     setSelectedBrand(brand);
     setBrandDetailTab('overview');
     setActiveTab('brand-detail');
     setBrandPlayers([]);
+    setBrandTokens([]);
     fetchBrandPlayers(brand.slug);
+    fetchBrandTokens(brand.slug);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -236,6 +244,50 @@ export default function CoreAdminConsole() {
       setPlayersError('Network error while loading players');
     } finally {
       setIsLoadingPlayers(false);
+    }
+  };
+
+  // Fetch QR Tokens for a specific brand
+  const fetchBrandTokens = async (brandSlug) => {
+    setIsLoadingTokens(true);
+    setTokensError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/brands/${brandSlug}/tokens`);
+      const data = await res.json();
+      if (data.success) {
+        setBrandTokens(data.tokens || []);
+      } else {
+        setTokensError(data.error || 'Failed to load tokens for this brand');
+      }
+    } catch (err) {
+      console.error('Fetch tokens error:', err);
+      setTokensError('Network error while loading tokens');
+    } finally {
+      setIsLoadingTokens(false);
+    }
+  };
+
+  // Generate Batch of Tokens for Testing
+  const handleGenerateTestTokens = async (brandSlug, count = 10, prefix = 'PET') => {
+    setIsGeneratingTokens(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/brands/${brandSlug}/tokens/batch-create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count, prefix, initialLives: 3 })
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchBrandTokens(brandSlug);
+        fetchBrands();
+      } else {
+        alert(data.error || 'Failed to generate tokens');
+      }
+    } catch (err) {
+      console.error('Token generation error:', err);
+      alert('Network error while creating tokens');
+    } finally {
+      setIsGeneratingTokens(false);
     }
   };
 
@@ -1151,7 +1203,7 @@ export default function CoreAdminConsole() {
                 </div>
               </div>
 
-              {/* Sub-Navigation Tabs: Overview vs Users */}
+              {/* Sub-Navigation Tabs: Overview vs Users vs Tokens */}
               <div className="brand-page-tabs">
                 <button
                   type="button"
@@ -1168,6 +1220,14 @@ export default function CoreAdminConsole() {
                 >
                   <Icons.Users />
                   <span>Users / Players ({brandPlayers.length})</span>
+                </button>
+                <button
+                  type="button"
+                  className={`brand-page-tab-btn ${brandDetailTab === 'tokens' ? 'active' : ''}`}
+                  onClick={() => setBrandDetailTab('tokens')}
+                >
+                  <Icons.Ticket />
+                  <span>QR Tokens ({brandTokens.length})</span>
                 </button>
               </div>
             </div>
@@ -1393,6 +1453,172 @@ export default function CoreAdminConsole() {
                               <span style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>
                                 {player.lastPlayed ? new Date(player.lastPlayed).toLocaleDateString() : 'N/A'}
                               </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB CONTENT 3: QR TOKENS */}
+            {brandDetailTab === 'tokens' && (
+              <div className="cyber-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '12px' }}>
+                  <div>
+                    <h3 style={{ margin: '0 0 4px 0', color: 'var(--color-white)', fontSize: '1.15rem' }}>
+                      QR Tokens & Gameplay Passes
+                    </h3>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--color-gray)' }}>
+                      Active, claimed, and exhausted QR voucher tokens provisioned for <strong>{selectedBrand.name}</strong>.
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                      type="button"
+                      className="btn-add-brand-prominent"
+                      style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                      onClick={() => handleGenerateTestTokens(selectedBrand.slug, 5, 'PET')}
+                      disabled={isGeneratingTokens}
+                      title="Generate 5 test QR tokens with 3 lives each"
+                    >
+                      <Icons.Plus />
+                      <span>{isGeneratingTokens ? 'Generating...' : '+ Generate 5 Test Tokens'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn-cyber-secondary"
+                      style={{ padding: '6px 14px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                      onClick={() => fetchBrandTokens(selectedBrand.slug)}
+                      disabled={isLoadingTokens}
+                    >
+                      <Icons.Refresh spinning={isLoadingTokens} />
+                      <span>{isLoadingTokens ? 'Refreshing...' : 'Refresh Tokens'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {isLoadingTokens ? (
+                  <div className="empty-sub-panel" style={{ padding: '4rem 2rem' }}>
+                    <div className="status-dot-pulse" style={{ margin: '0 auto 12px auto' }}></div>
+                    <h4 style={{ color: 'var(--color-white)', marginBottom: '4px' }}>Loading Brand Tokens...</h4>
+                    <p style={{ color: 'var(--color-gray)', margin: 0 }}>Retrieving vouchers from {activeConfig.badgeText}</p>
+                  </div>
+                ) : tokensError ? (
+                  <div className="error-alert-banner" style={{ margin: '1rem 0' }}>
+                    <Icons.AlertTriangle />
+                    <span>{tokensError}</span>
+                  </div>
+                ) : brandTokens.length === 0 ? (
+                  <div className="empty-sub-panel" style={{ padding: '4rem 2rem' }}>
+                    <div style={{ color: 'var(--color-gray)', marginBottom: '12px' }}>
+                      <Icons.Ticket />
+                    </div>
+                    <h3 style={{ color: 'var(--color-white)', marginBottom: '6px' }}>No Tokens Found for {selectedBrand.name}</h3>
+                    <p style={{ color: 'var(--color-muted)', fontSize: '0.88rem', maxWidth: '500px', margin: '0 auto 1.5rem auto' }}>
+                      Generate test tokens right now using the button above to simulate QR code scans and gameplay sessions.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn-add-brand-prominent"
+                      onClick={() => handleGenerateTestTokens(selectedBrand.slug, 5, 'PET')}
+                      disabled={isGeneratingTokens}
+                    >
+                      <Icons.Plus />
+                      <span>Generate 5 Test Tokens (PET-XXXX)</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="admins-table-wrapper">
+                    <table className="cyber-table">
+                      <thead>
+                        <tr>
+                          <th>Token Code (Test Token)</th>
+                          <th>Token UUID</th>
+                          <th>Attached User</th>
+                          <th>Lives Remaining</th>
+                          <th>Status</th>
+                          <th>Created At</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {brandTokens.map((t) => (
+                          <tr key={t.id}>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span className="brand-card-slug" style={{ color: 'var(--color-solar-lime)', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                                  {t.code}
+                                </span>
+                              </div>
+                            </td>
+                            <td>
+                              <code style={{ fontSize: '0.72rem', color: 'var(--color-gray)' }}>
+                                {t.id}
+                              </code>
+                            </td>
+                            <td>
+                              {t.user ? (
+                                <div>
+                                  <div style={{ fontWeight: 600, color: 'var(--color-white)' }}>
+                                    {t.user.name}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--color-cyan)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <Icons.Phone />
+                                    <span>{t.user.phone}</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span style={{ color: 'var(--color-muted)', fontSize: '0.78rem' }}>
+                                  Unclaimed (Available)
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ 
+                                  fontWeight: 'bold', 
+                                  fontSize: '1rem',
+                                  color: t.livesRemaining > 1 ? 'var(--color-solar-lime)' : t.livesRemaining === 1 ? 'var(--color-amber)' : '#ff5252' 
+                                }}>
+                                  {t.livesRemaining}
+                                </span>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--color-gray)' }}>
+                                  / {t.initialLives} lives
+                                </span>
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`role-pill-badge ${t.status === 'ACTIVE' ? 'super' : 'admin'}`} style={{
+                                background: t.status === 'ACTIVE' ? 'rgba(0, 230, 118, 0.15)' : 'rgba(255, 82, 82, 0.15)',
+                                color: t.status === 'ACTIVE' ? 'var(--color-emerald)' : '#ff5252',
+                                borderColor: t.status === 'ACTIVE' ? 'var(--color-emerald)' : '#ff5252'
+                              }}>
+                                {t.status}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>
+                                {new Date(t.createdAt).toLocaleDateString()}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn-card-launch"
+                                style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                                onClick={() => {
+                                  window.open(`/?brand=${selectedBrand.slug}&token=${t.code}`, '_blank');
+                                }}
+                                title={`Launch game with token ${t.code}`}
+                              >
+                                <span>Play</span>
+                                <Icons.ExternalLink />
+                              </button>
                             </td>
                           </tr>
                         ))}

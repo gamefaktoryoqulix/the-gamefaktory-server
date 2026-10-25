@@ -734,6 +734,58 @@ app.post(['/api/v1/tokens/batch-create', '/api/brands/:brandSlug/tokens/batch-cr
   }
 });
 
+// 2b. List All Tokens for a Brand (with Attached User & Lives Left)
+app.get(['/api/brands/:brandSlug/tokens', '/api/tokens'], async (req, res) => {
+  try {
+    const brandSlug = (req.params.brandSlug || req.query.brand || req.query.brandSlug || 'popular').trim().toLowerCase();
+    const brandRes = await resolveBrandAndAliases(brandSlug);
+    if (!brandRes) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
+
+    const tokens = await prisma.qrToken.findMany({
+      where: {
+        brandId: { in: brandRes.brandIds }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return res.json({
+      success: true,
+      brand: brandRes.primary.slug,
+      count: tokens.length,
+      tokens: tokens.map((t) => ({
+        id: t.id,
+        code: t.code,
+        gameSlug: t.gameSlug,
+        initialLives: t.initialLives,
+        livesRemaining: t.livesRemaining,
+        status: t.status,
+        claimedAt: t.claimedAt,
+        lastPlayedAt: t.lastPlayedAt,
+        createdAt: t.createdAt,
+        user: t.user ? {
+          id: t.user.id,
+          name: t.user.name || 'Sparky Runner',
+          phone: t.user.phone ? (t.user.phone.startsWith('+') ? t.user.phone : `+974 ${t.user.phone}`) : 'N/A',
+          email: t.user.email
+        } : null
+      }))
+    });
+  } catch (error) {
+    console.error('Fetch brand tokens error:', error);
+    return res.status(500).json({ error: 'Failed to fetch tokens' });
+  }
+});
+
 // ----------------------------------------------------
 // BRAND-ISOLATED GAMEPLAY SESSIONS & SCORES
 // ----------------------------------------------------
