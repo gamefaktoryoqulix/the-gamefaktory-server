@@ -1609,10 +1609,18 @@ app.get([
 
 // Authoritative Catalog & Costs
 const BRAND_REWARDS_CATALOG = {
-  'rw_5k':  { title: 'Keychain / Pen / Cap', cost: 5000,  discount: 'STORE GIFT' },
-  'rw_10k': { title: 'Diary',                cost: 10000, discount: 'STORE GIFT' },
-  'rw_16k': { title: 'Diary Box',            cost: 16000, discount: 'STORE GIFT' },
-  'rw_30k': { title: 'Watch / T-Shirt',      cost: 30000, discount: 'STORE GIFT' },
+  'rw_keychain':  { title: 'Keychain',  cost: 1000, discount: 'KEYCHAIN' },
+  'rw_pen':       { title: 'Pen',       cost: 1500, discount: 'PEN' },
+  'rw_cap':       { title: 'Cap',       cost: 1500, discount: 'CAP' },
+  'rw_diary':     { title: 'Diary',     cost: 2000, discount: 'DIARY' },
+  'rw_diary_box': { title: 'Diary Box', cost: 4000, discount: 'DIARY BOX' },
+  'rw_watch':     { title: 'Watch',     cost: 6000, discount: 'WATCH' },
+  'rw_shirt':     { title: 'T-Shirt',   cost: 8000, discount: 'T-SHIRT' },
+  // Backwards compatibility aliases if any in-flight requests use old keys
+  'rw_5k':        { title: 'Keychain / Pen / Cap', cost: 1000, discount: 'KEYCHAIN' },
+  'rw_10k':       { title: 'Diary',                cost: 2000, discount: 'DIARY' },
+  'rw_16k':       { title: 'Diary Box',            cost: 4000, discount: 'DIARY BOX' },
+  'rw_30k':       { title: 'Watch / T-Shirt',      cost: 6000, discount: 'WATCH' },
 };
 
 // Endpoint 1: Claim Coupon (User Intent)
