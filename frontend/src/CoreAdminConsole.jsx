@@ -178,6 +178,16 @@ export default function CoreAdminConsole() {
     }
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/brands/${brandId}`, { method: 'DELETE' });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        if (res.status === 404) {
+          alert(`Error (404): The server at ${API_BASE_URL} does not have the DELETE endpoint yet. Please trigger a "Redeploy" in Coolify to apply the latest server update.`);
+        } else {
+          alert(`Server returned an error (${res.status}): ${text.slice(0, 150)}`);
+        }
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         fetchBrands();
@@ -186,7 +196,7 @@ export default function CoreAdminConsole() {
       }
     } catch (err) {
       console.error('Delete brand error:', err);
-      alert('Network error while deleting brand');
+      alert(`Network error while deleting brand: ${err.message}`);
     }
   };
 
@@ -197,6 +207,16 @@ export default function CoreAdminConsole() {
     }
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/brands/reset-all`, { method: 'POST' });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        if (res.status === 404) {
+          alert(`Error (404): The server at ${API_BASE_URL} does not have the reset endpoint yet. Please trigger a "Redeploy" in Coolify to apply the latest server update.`);
+        } else {
+          alert(`Server returned an error (${res.status}): ${text.slice(0, 150)}`);
+        }
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         fetchBrands();
@@ -205,7 +225,7 @@ export default function CoreAdminConsole() {
       }
     } catch (err) {
       console.error('Reset error:', err);
-      alert('Network error while resetting');
+      alert(`Network error while resetting: ${err.message}`);
     }
   };
 
