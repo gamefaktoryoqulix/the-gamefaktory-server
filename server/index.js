@@ -155,13 +155,14 @@ app.get('/api/dev/invoices', async (req, res) => {
 // Custom Password-less Registration Route (Better Auth User Schema with Brand Scoping)
 app.post('/api/register', async (req, res) => {
   try {
-    const { phone, name, age, brand: brandInput, brandSlug: brandSlugInput } = req.body;
+    const { phone, name, companyName, age, brand: brandInput, brandSlug: brandSlugInput } = req.body;
     if (!phone || !name) {
       return res.status(400).json({ error: "Phone number and name are required." });
     }
     
     const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
     const parsedAge = age !== undefined && age !== null && !isNaN(parseInt(age, 10)) ? parseInt(age, 10) : null;
+    const cleanCompanyName = companyName && typeof companyName === 'string' && companyName.trim() ? companyName.trim() : null;
     const targetBrandSlug = (brandSlugInput || brandInput || 'popular').trim().toLowerCase();
     
     // Check if user already exists by phone
@@ -170,11 +171,12 @@ app.post('/api/register', async (req, res) => {
     });
 
     if (user) {
-      // Update name/age if provided
+      // Update name/companyName/age if provided
       user = await prisma.user.update({
         where: { id: user.id },
         data: { 
           name: name.trim(), 
+          companyName: cleanCompanyName !== null ? cleanCompanyName : user.companyName,
           age: parsedAge !== null ? parsedAge : user.age 
         }
       });
@@ -186,6 +188,7 @@ app.post('/api/register', async (req, res) => {
         data: {
           phone: cleanPhone,
           name: name.trim(),
+          companyName: cleanCompanyName,
           age: parsedAge,
           email: dummyEmail
         }
@@ -211,7 +214,19 @@ app.post('/api/register', async (req, res) => {
       }
     }
 
-    res.json({ success: true, user });
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        companyName: user.companyName || null,
+        phone: user.phone ? (user.phone.startsWith('+') ? user.phone : `+974${user.phone}`) : null,
+        age: user.age,
+        email: user.email,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }
+    });
   } catch (error) {
     console.error('[Register Error]:', error);
     res.status(400).json({ error: error.message || "Registration failed." });
@@ -798,17 +813,24 @@ app.get(['/api/brands/:brandSlug/tokens', '/api/tokens'], async (req, res) => {
 // ----------------------------------------------------
 
 // Helper to resolve or provision a player for brand session linkage
-async function resolveSessionUser(userId, phone, brandId, playerName) {
+async function resolveSessionUser(userId, phone, brandId, playerName, companyName) {
   const displayName = playerName && playerName.trim() ? playerName.trim() : 'Sparky Runner';
+  const cleanCompanyName = companyName && typeof companyName === 'string' && companyName.trim() ? companyName.trim() : null;
 
   if (userId) {
     const existing = await prisma.user.findUnique({ where: { id: userId } });
     if (existing) {
-      // If existing user has the fallback name and a real name is now provided, update it:
+      const updateData = {};
       if (existing.name === 'Sparky Runner' && displayName !== 'Sparky Runner') {
+        updateData.name = displayName;
+      }
+      if (cleanCompanyName && !existing.companyName) {
+        updateData.companyName = cleanCompanyName;
+      }
+      if (Object.keys(updateData).length > 0) {
         return await prisma.user.update({
           where: { id: existing.id },
-          data: { name: displayName },
+          data: updateData,
         });
       }
       return existing;
@@ -819,21 +841,29 @@ async function resolveSessionUser(userId, phone, brandId, playerName) {
     const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
     const existing = await prisma.user.findUnique({ where: { phone: cleanPhone } });
     if (existing) {
+      const updateData = {};
       if (existing.name === 'Sparky Runner' && displayName !== 'Sparky Runner') {
+        updateData.name = displayName;
+      }
+      if (cleanCompanyName && !existing.companyName) {
+        updateData.companyName = cleanCompanyName;
+      }
+      if (Object.keys(updateData).length > 0) {
         return await prisma.user.update({
           where: { id: existing.id },
-          data: { name: displayName },
+          data: updateData,
         });
       }
       return existing;
     }
 
-    // Create user with real player name:
+    // Create user with real player name and optional companyName:
     return await prisma.user.create({
       data: {
         email: `runner_${cleanPhone}@popular.sparky`,
         phone: cleanPhone,
         name: displayName,
+        companyName: cleanCompanyName,
       },
     });
   }
@@ -874,6 +904,7 @@ app.post(
       const userId = req.body.userId || null;
       const phone = req.body.phone || null;
       const playerName = req.body.name || req.body.playerName || null;
+      const companyName = req.body.companyName || null;
 
       if (!tokenCode) {
         return res.status(400).json({ success: false, error: 'Token is required' });
@@ -915,9 +946,9 @@ app.post(
         });
       }
 
-      // Resolve player linked to this session with real name
+      // Resolve player linked to this session with real name & companyName
       const targetUserId = userId || token.userId;
-      const user = await resolveSessionUser(targetUserId, phone, brand.id, playerName);
+      const user = await resolveSessionUser(targetUserId, phone, brand.id, playerName, companyName);
 
       // Bind token to user if unassigned
       if (!token.userId && user) {
@@ -1327,6 +1358,7 @@ app.get([
       player: {
         id: user.id,
         name: user.name || 'Sparky Runner',
+        companyName: user.companyName || null,
         phone: user.phone ? (user.phone.startsWith('+') ? user.phone : `+974 ${user.phone}`) : 'N/A'
       },
       highestScore,    // Personal best in a single run under this brand
@@ -1509,7 +1541,8 @@ app.get([
           select: {
             id: true,
             name: true,
-            phone: true
+            phone: true,
+            companyName: true
           }
         },
         brand: {
@@ -1530,9 +1563,14 @@ app.get([
           rank: 0,
           id: s.id,
           userId: s.userId,
+          customerId: s.userId,
           name: s.user?.name || 'Sparky Runner',
+          displayName: s.user?.name || 'Sparky Runner',
+          companyName: s.user?.companyName || null,
           phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
           score: s.score, // Highest single game score this week
+          bestScore: s.score,
+          coins: s.score,
           duration: s.duration || 0,
           brand: s.brand?.name || 'Popular Electricals',
           brandSlug: s.brand?.slug || 'popular',
@@ -1704,7 +1742,8 @@ app.get([
           select: {
             id: true,
             name: true,
-            phone: true
+            phone: true,
+            companyName: true
           }
         },
         brand: {
@@ -1757,7 +1796,10 @@ app.get([
         userAggMap.set(uid, {
           rank: 0,
           userId: s.userId,
+          customerId: s.userId,
           name: s.user?.name || 'Sparky Runner',
+          displayName: s.user?.name || 'Sparky Runner',
+          companyName: s.user?.companyName || null,
           phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
           rawPhone: s.user?.phone || null,
           grossScore: s.score,     // Gross coins earned
@@ -1792,6 +1834,7 @@ app.get([
       }
       entry.redeemedCoins = deductedCoins;
       entry.totalScore = Math.max(0, entry.grossScore - deductedCoins);
+      entry.coins = entry.totalScore;
       delete entry.rawPhone;
     });
 
@@ -1849,7 +1892,7 @@ app.get([
     orderBy: { score: 'desc' },
     take: limit * 2,
     include: {
-      user: { select: { id: true, name: true, phone: true } },
+      user: { select: { id: true, name: true, phone: true, companyName: true } },
       brand: { select: { id: true, slug: true, name: true } }
     }
   });
@@ -1862,9 +1905,14 @@ app.get([
         rank: 0,
         id: s.id,
         userId: s.userId,
+        customerId: s.userId,
         name: s.user?.name || 'Sparky Runner',
+        displayName: s.user?.name || 'Sparky Runner',
+        companyName: s.user?.companyName || null,
         phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
         score: s.score,
+        bestScore: s.score,
+        coins: s.score,
         duration: s.duration || 0,
         brand: s.brand?.name || 'Popular Electricals',
         brandSlug: s.brand?.slug || 'popular',

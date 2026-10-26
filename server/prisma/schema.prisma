@@ -16,6 +16,7 @@ model User {
   username        String?          @unique // For admin/superadmin login
   name            String?
   phone           String?          @unique
+  companyName     String?          // For contractor / business owner identification
   age             Int?
   password        String?          // Hashed password for admin authentication
   role            String           @default("PLAYER") // "CORE_ADMIN", "SUPERADMIN", "ADMIN", "PLAYER"
