@@ -66,11 +66,9 @@ async function processRailrollsBill(payload) {
     const rawPhone = customer.phone || customer.mobile || customer.contact || order.customerPhone || null;
     const customerPhone = rawPhone ? String(rawPhone).replace(/\D/g, '').slice(-10) : null;
 
-    // Extract item count (properties.OrderItem, order.items, properties.Items, order.totalItems, etc.)
+    // Extract item count (order.items, properties.Items, order.totalItems, etc.)
     let itemsCount = 1;
-    if (Array.isArray(properties.OrderItem)) {
-      itemsCount = properties.OrderItem.reduce((sum, item) => sum + (Number(item.quantity || item.qty) || 1), 0);
-    } else if (Array.isArray(order.items)) {
+    if (Array.isArray(order.items)) {
       itemsCount = order.items.reduce((sum, item) => sum + (Number(item.quantity || item.qty) || 1), 0);
     } else if (Array.isArray(properties.Items)) {
       itemsCount = properties.Items.reduce((sum, item) => sum + (Number(item.quantity || item.qty) || 1), 0);
@@ -79,8 +77,8 @@ async function processRailrollsBill(payload) {
     }
     if (itemsCount < 1) itemsCount = 1;
 
-    // Extract bill amount (order.total, order.netAmount, order.totalAmount, etc.)
-    const rawAmount = order.total || order.netAmount || order.totalAmount || order.billAmount || order.amount || null;
+    // Extract bill amount
+    const rawAmount = order.netAmount || order.totalAmount || order.billAmount || order.amount || null;
     const amount = rawAmount ? parseFloat(rawAmount) : null;
 
     // Rule: 3 gameplays per item purchased
@@ -635,27 +633,6 @@ async function resolveBrandAndAliases(slugInput) {
     };
   }
 
-  // If querying zuzyrun or mouzy, alias them
-  if (cleanSlug === 'zuzyrun' || cleanSlug === 'mouzy' || cleanSlug === 'mouzy-runner') {
-    const brands = await prisma.brand.findMany({
-      where: {
-        slug: { in: ['zuzyrun', 'mouzy', 'mouzy-runner'] }
-      }
-    });
-    if (brands.length > 0) {
-      const primary = brands.find(b => b.slug === cleanSlug) || brands[0];
-      const brandIds = brands.map(b => b.id);
-      const brandSlugs = brands.map(b => b.slug);
-      return {
-        primary,
-        brandIds,
-        brandSlugs,
-        matchesBrandId: (id) => brandIds.includes(id),
-        matchesBrandSlug: (slug) => brandSlugs.includes(slug)
-      };
-    }
-  }
-
   // Standard brand resolution
   const brand = await prisma.brand.findUnique({ where: { slug: cleanSlug } });
   if (!brand) return null;
@@ -730,7 +707,9 @@ app.get(['/api/v1/tokens/verify', '/api/token/verify'], async (req, res) => {
 app.post(['/api/v1/tokens/batch-create', '/api/brands/:brandSlug/tokens/batch-create'], async (req, res) => {
   try {
     const brandSlug = (req.params.brandSlug || req.body.brandSlug || 'popular').trim().toLowerCase();
+    const gameSlug = (req.body.gameSlug || 'sparky-run').trim().toLowerCase();
     const count = Math.min(Math.max(1, parseInt(req.body.count, 10) || 36), 500);
+    const prefix = (req.body.prefix || 'PET').trim().toUpperCase();
     const initialLives = parseInt(req.body.initialLives, 10) || 3;
 
     const brand = await prisma.brand.findUnique({ where: { slug: brandSlug } });
@@ -738,37 +717,17 @@ app.post(['/api/v1/tokens/batch-create', '/api/brands/:brandSlug/tokens/batch-cr
       return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
     }
 
-    // Determine default prefix and game slug based on brand
-    const isMouzy = brand.slug.includes('mouzy') || brand.slug.includes('zuzy');
-    const defaultPrefix = isMouzy ? 'GLB' : 'PET';
-    const defaultGame = isMouzy ? 'zuzyrun' : 'sparky-run';
-    const prefix = (req.body.prefix || defaultPrefix).trim().toUpperCase();
-    const gameSlug = (req.body.gameSlug || defaultGame).trim().toLowerCase();
-
     const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // exclude ambiguous 0,O,1,I
     const generatedCodes = [];
-    const qrRecords = [];
+    const records = [];
 
     for (let i = 0; i < count; i++) {
-      let code;
-      if (prefix === 'GLB' || isMouzy) {
-        // Standard 10-char alphanumeric suffix for Mouzy: GLB-XXXXXXXXXX
-        let suffix = '';
-        const bytes = crypto.randomBytes(10);
-        for (let j = 0; j < 10; j++) suffix += chars[bytes[j] % chars.length];
-        code = `${prefix}-${suffix}`;
-      } else {
-        // Standard 4-4 suffix for SparkyRun: PET-XXXX-XXXX
-        let p1 = '', p2 = '';
-        for (let j = 0; j < 4; j++) p1 += chars[Math.floor(Math.random() * chars.length)];
-        for (let j = 0; j < 4; j++) p2 += chars[Math.floor(Math.random() * chars.length)];
-        code = `${prefix}-${p1}-${p2}`;
-      }
-
+      let p1 = '', p2 = '';
+      for (let j = 0; j < 4; j++) p1 += chars[Math.floor(Math.random() * chars.length)];
+      for (let j = 0; j < 4; j++) p2 += chars[Math.floor(Math.random() * chars.length)];
+      const code = `${prefix}-${p1}-${p2}`;
       generatedCodes.push(code);
-
-      // Save strictly to QrToken with brandId and gameSlug
-      qrRecords.push({
+      records.push({
         code,
         brandId: brand.id,
         gameSlug,
@@ -779,7 +738,7 @@ app.post(['/api/v1/tokens/batch-create', '/api/brands/:brandSlug/tokens/batch-cr
     }
 
     await prisma.qrToken.createMany({
-      data: qrRecords,
+      data: records,
       skipDuplicates: true,
     });
 
@@ -789,9 +748,7 @@ app.post(['/api/v1/tokens/batch-create', '/api/brands/:brandSlug/tokens/batch-cr
       game: gameSlug,
       count: generatedCodes.length,
       tokens: generatedCodes,
-      exampleUrl: isMouzy
-        ? `https://zuzyrun.gamefaktory.com/?token=${generatedCodes[0]}`
-        : `https://sparkyrun.gamefaktory.com/?token=${generatedCodes[0]}`,
+      exampleUrl: `https://sparkyrun.gamefaktory.com/?token=${generatedCodes[0]}`,
     });
   } catch (error) {
     console.error('Batch create error:', error);
@@ -806,7 +763,6 @@ app.get(['/api/brands/:brandSlug/tokens', '/api/tokens'], async (req, res) => {
     const brandRes = await resolveBrandAndAliases(brandSlug);
     if (!brandRes) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
 
-    // Pure, scalable query from QrToken partitioned strictly by brandId
     const tokens = await prisma.qrToken.findMany({
       where: {
         brandId: { in: brandRes.brandIds }
@@ -817,7 +773,6 @@ app.get(['/api/brands/:brandSlug/tokens', '/api/tokens'], async (req, res) => {
             id: true,
             name: true,
             phone: true,
-            companyName: true,
             email: true
           }
         }
@@ -841,9 +796,8 @@ app.get(['/api/brands/:brandSlug/tokens', '/api/tokens'], async (req, res) => {
         createdAt: t.createdAt,
         user: t.user ? {
           id: t.user.id,
-          name: t.user.name || 'Runner',
-          phone: t.user.phone || 'N/A',
-          companyName: t.user.companyName || null,
+          name: t.user.name || 'Sparky Runner',
+          phone: t.user.phone ? (t.user.phone.startsWith('+') ? t.user.phone : `+974 ${t.user.phone}`) : 'N/A',
           email: t.user.email
         } : null
       }))
@@ -851,528 +805,6 @@ app.get(['/api/brands/:brandSlug/tokens', '/api/tokens'], async (req, res) => {
   } catch (error) {
     console.error('Fetch brand tokens error:', error);
     return res.status(500).json({ error: 'Failed to fetch tokens' });
-  }
-});
-
-// Brand-specific Invoices / POS Bills list
-app.get(['/api/brands/:brandSlug/invoices', '/api/invoices'], async (req, res) => {
-  try {
-    const brandSlug = (req.params.brandSlug || req.query.brand || req.query.brandSlug || 'railrolls').trim().toLowerCase();
-    const brandRes = await resolveBrandAndAliases(brandSlug);
-    if (!brandRes) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
-
-    const invoices = await prisma.invoice.findMany({
-      where: {
-        brandId: { in: brandRes.brandIds }
-      },
-      include: {
-        claimedByUser: {
-          select: {
-            id: true,
-            name: true,
-            phone: true
-          }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    return res.json({
-      success: true,
-      brand: brandRes.primary.slug,
-      count: invoices.length,
-      invoices: invoices.map((inv) => {
-        const payload = inv.rawPayload || {};
-        const customer = payload.Customer || {};
-        const order = payload.Order || {};
-        const items = payload.OrderItem || [];
-        return {
-          id: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          customerInvoiceId: order.customer_invoice_id || inv.invoiceNumber,
-          outletCode: inv.outletCode,
-          customerPhone: inv.customerPhone,
-          customerName: customer.name || (inv.claimedByUser ? inv.claimedByUser.name : null),
-          orderFrom: order.order_from || 'POS',
-          orderType: order.order_type || 'Dine-In',
-          itemsCount: inv.itemsCount,
-          maxPlaysAllowed: inv.maxPlaysAllowed,
-          amount: inv.amount ? parseFloat(inv.amount) : 0,
-          status: inv.status,
-          claimedAt: inv.claimedAt,
-          createdAt: inv.createdAt,
-          claimedByUser: inv.claimedByUser,
-          itemsSummary: Array.isArray(items) ? items.map(it => `${it.quantity || 1}x ${it.name}`).join(', ') : ''
-        };
-      })
-    });
-  } catch (error) {
-    console.error('Fetch brand invoices error:', error);
-    return res.status(500).json({ error: 'Failed to fetch invoices' });
-  }
-});
-
-// ----------------------------------------------------
-// OUTLETS API (MOUZY RUNNER / ZUZY RUN TENANCY)
-// ----------------------------------------------------
-
-// 1. List all active outlets
-app.get(['/v1/outlets', '/api/v1/outlets', '/api/outlets'], async (req, res) => {
-  try {
-    const { status = 'active', countryCode, brand: brandSlug = 'mouzy' } = req.query;
-
-    const whereClause = {};
-    if (status) {
-      whereClause.status = status;
-    }
-    if (countryCode) {
-      whereClause.countryCode = countryCode;
-    }
-
-    const outlets = await prisma.outlet.findMany({
-      where: whereClause,
-      orderBy: { name: 'asc' },
-      select: {
-        id: true,
-        name: true,
-        place: true,
-        countryCode: true,
-        status: true
-      }
-    });
-
-    return res.status(200).json({
-      success: true,
-      count: outlets.length,
-      data: outlets.map(o => ({
-        id: o.id,
-        name: o.name,
-        place: o.place,
-        countryCode: o.countryCode,
-        status: o.status
-      }))
-    });
-  } catch (error) {
-    console.error('[Outlets API Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to fetch store outlets' });
-  }
-});
-
-// 2. Retrieve details for a single outlet
-app.get(['/v1/outlets/:id', '/api/v1/outlets/:id', '/api/outlets/:id'], async (req, res) => {
-  try {
-    const { id } = req.params;
-    const outlet = await prisma.outlet.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        place: true,
-        countryCode: true,
-        status: true
-      }
-    });
-
-    if (!outlet) {
-      return res.status(404).json({ success: false, error: `Outlet '${id}' not found` });
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: {
-        id: outlet.id,
-        name: outlet.name,
-        place: outlet.place,
-        countryCode: outlet.countryCode,
-        status: outlet.status
-      }
-    });
-  } catch (error) {
-    console.error('[Outlet Detail API Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to fetch outlet details' });
-  }
-});
-
-// ----------------------------------------------------
-// ZUZYRUN / MOUZY V1 AUTH & TOKEN ENDPOINTS
-// ----------------------------------------------------
-
-// Helper: Normalize phone string to clean E.164 (e.g. +918606677503)
-function normalizeE164Phone(input) {
-  if (!input) return null;
-  const str = String(input).trim();
-  // Preserve leading plus if present
-  const hasPlus = str.startsWith('+');
-  const digits = str.replace(/\D/g, '');
-  if (!digits) return null;
-  return hasPlus ? `+${digits}` : (digits.length === 10 ? `+91${digits}` : `+${digits}`);
-}
-
-// Helper: Calculate 11:59:59.999 PM IST on the day of reference date
-function getEndOfDayIST(refDate = new Date()) {
-  const istOffsetMs = 5.5 * 60 * 60 * 1000;
-  const istTime = new Date(refDate.getTime() + istOffsetMs);
-  const year = istTime.getUTCFullYear();
-  const month = istTime.getUTCMonth();
-  const date = istTime.getUTCDate();
-  // End of IST day (23:59:59.999 IST) in UTC
-  return new Date(Date.UTC(year, month, date, 23, 59, 59, 999) - istOffsetMs);
-}
-
-// 1. Player Onboarding / Identity Check (POST /v1/auth/identify)
-app.post(['/v1/auth/identify', '/api/v1/auth/identify', '/api/brands/:brandSlug/auth/identify'], async (req, res) => {
-  try {
-    const { phone: rawPhone, name, homeOutletId, homeOutlet, dob, tokenId, brand: reqBrandSlug } = req.body;
-    const phone = normalizeE164Phone(rawPhone);
-
-    if (!phone) {
-      return res.status(400).json({ success: false, error: 'Valid phone number is required (E.164 format).' });
-    }
-
-    const cleanName = (name && typeof name === 'string' && name.trim()) ? name.trim() : 'Runner';
-    const cleanOutletId = (homeOutletId && typeof homeOutletId === 'string' && homeOutletId.trim()) ? homeOutletId.trim() : null;
-    const cleanDob = (dob && typeof dob === 'string' && dob.trim()) ? dob.trim() : null;
-    const targetBrandSlug = (req.params.brandSlug || reqBrandSlug || 'mouzy').trim().toLowerCase();
-
-    // 1. Resolve Target Brand
-    let brand = null;
-    if (tokenId) {
-      // Check if token specifies brand
-      const tokenRecord = await prisma.qrToken.findUnique({
-        where: { code: String(tokenId).trim().toUpperCase() },
-        include: { brand: true }
-      });
-      if (tokenRecord?.brand) brand = tokenRecord.brand;
-    }
-    if (!brand) {
-      const brandRes = await resolveBrandAndAliases(targetBrandSlug);
-      brand = brandRes ? brandRes.primary : await prisma.brand.findFirst();
-    }
-
-    // 2. Upsert Global User Identity
-    let user = await prisma.user.findFirst({
-      where: { phone }
-    });
-
-    let isNewUser = false;
-    if (!user) {
-      isNewUser = true;
-      const placeholderEmail = `${phone.replace(/\D/g, '')}@${brand ? brand.slug : 'user'}.gamefaktory.com`;
-      user = await prisma.user.create({
-        data: {
-          phone,
-          email: placeholderEmail,
-          name: cleanName,
-          homeOutletId: cleanOutletId,
-          dob: cleanDob,
-          highScore: 0,
-          totalScore: BigInt(0),
-          dailyHighScore: 0,
-          dailyLastPlayedAt: null,
-          role: 'PLAYER',
-          brandId: brand ? brand.id : null,
-          lastPlayedAt: new Date()
-        }
-      });
-    } else {
-      // Update global user name / dob if not set or newer name provided
-      const updatePayload = {};
-      if (cleanName && cleanName !== 'Runner' && cleanName !== 'Zuzy Runner' && cleanName !== 'Sparky Runner' && user.name !== cleanName) {
-        updatePayload.name = cleanName;
-      }
-      if (cleanDob && !user.dob) {
-        updatePayload.dob = cleanDob;
-      }
-      if (cleanOutletId && !user.homeOutletId) {
-        updatePayload.homeOutletId = cleanOutletId;
-      }
-
-      if (Object.keys(updatePayload).length > 0) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: updatePayload
-        });
-      }
-    }
-
-    // 3. IMMEDIATELY UPSERT BRAND-SCOPED MEMBERSHIP (TENANCY)
-    // Even if the user never plays a game, the brand immediately owns this customer in CRM!
-    let membership = null;
-    if (brand) {
-      membership = await prisma.brandMember.upsert({
-        where: {
-          userId_brandId: {
-            userId: user.id,
-            brandId: brand.id
-          }
-        },
-        update: {
-          homeOutletId: cleanOutletId || undefined,
-          lastActiveAt: new Date()
-        },
-        create: {
-          userId: user.id,
-          brandId: brand.id,
-          homeOutletId: cleanOutletId,
-          registeredVia: tokenId ? 'QR_TOKEN' : 'DIRECT',
-          initialTokenId: tokenId ? String(tokenId).trim().toUpperCase() : null,
-          totalScore: BigInt(0),
-          highScore: 0,
-          dailyHighScore: 0
-        },
-        include: {
-          homeOutlet: true
-        }
-      });
-    }
-
-    // 4. Return consolidated user + brand membership info
-    const resolvedOutletId = membership?.homeOutletId || user.homeOutletId || cleanOutletId;
-    const resolvedOutletName = membership?.homeOutlet?.name || null;
-
-    return res.status(200).json({
-      success: true,
-      isNewUser,
-      user: {
-        phone: user.phone,
-        name: user.name,
-        homeOutletId: resolvedOutletId,
-        homeOutlet: resolvedOutletName,
-        brandId: brand ? brand.id : null,
-        brandSlug: brand ? brand.slug : null,
-        highScore: membership ? membership.highScore : (user.highScore || 0),
-        totalScore: membership ? Number(membership.totalScore || 0) : Number(user.totalScore || 0),
-        dailyHighScore: membership ? membership.dailyHighScore : (user.dailyHighScore || 0),
-        dailyLastPlayedAt: membership?.dailyLastPlayed || user.dailyLastPlayedAt || null
-      }
-    });
-  } catch (error) {
-    console.error('[V1 Auth Identify Error]:', error);
-    return res.status(500).json({ success: false, error: 'Internal error during player identification' });
-  }
-});
-
-// 2. Verify Scanned QR Token (GET /v1/tokens/:tokenId)
-app.get(['/v1/tokens/:tokenId', '/api/v1/tokens/:tokenId'], async (req, res) => {
-  try {
-    const { tokenId } = req.params;
-    if (!tokenId) {
-      return res.status(400).json({ success: false, error: 'tokenId parameter is required.' });
-    }
-
-    const tokenCode = tokenId.trim().toUpperCase();
-
-    // Query unified qrToken model
-    const token = await prisma.qrToken.findUnique({
-      where: { code: tokenCode },
-      include: { brand: true, user: true }
-    });
-
-    if (!token) {
-      return res.status(404).json({ success: false, error: 'Token not found' });
-    }
-
-    // Strict ZuzyRun / Mouzy Brand Isolation:
-    // Only tokens created for mouzy/zuzyrun can be used in ZuzyRun!
-    const brand = token.brand;
-    const isMouzyToken = brand && (brand.slug === 'mouzy' || brand.slug === 'zuzyrun' || brand.slug === 'mouzy-runner');
-    if (!isMouzyToken) {
-      return res.status(403).json({
-        success: false,
-        error: 'This token does not belong to Mouzy (ZuzyRun)'
-      });
-    }
-
-    // Check if token is expired: if expires_at IS NOT NULL AND expires_at < NOW()
-    const now = new Date();
-    let currentStatus = token.status;
-    if (token.expiresAt && new Date(token.expiresAt) < now && currentStatus === 'ACTIVE') {
-      currentStatus = 'EXHAUSTED';
-      await prisma.qrToken.update({
-        where: { id: token.id },
-        data: { status: 'EXHAUSTED' }
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      token: {
-        tokenId: token.code,
-        type: 'global',
-        livesLeft: token.livesRemaining,
-        status: currentStatus.toLowerCase(),
-        ownerPhone: token.user?.phone || null,
-        expiresAt: token.expiresAt ? token.expiresAt.toISOString() : null
-      }
-    });
-  } catch (error) {
-    console.error('[V1 Get Token Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to retrieve token details' });
-  }
-});
-
-// 3. Token First-Scan Activation & Expiry Lock (POST /v1/tokens/:tokenId/claim)
-app.post(['/v1/tokens/:tokenId/claim', '/api/v1/tokens/:tokenId/claim'], async (req, res) => {
-  try {
-    const { tokenId } = req.params;
-    const { phone: rawPhone } = req.body;
-    const phone = normalizeE164Phone(rawPhone);
-
-    if (!tokenId) {
-      return res.status(400).json({ success: false, error: 'tokenId parameter is required.' });
-    }
-    if (!phone) {
-      return res.status(400).json({ success: false, error: 'Valid player phone number is required.' });
-    }
-
-    const tokenCode = tokenId.trim().toUpperCase();
-
-    const token = await prisma.qrToken.findUnique({
-      where: { code: tokenCode },
-      include: { brand: true, user: true }
-    });
-
-    if (!token) {
-      return res.status(404).json({ success: false, error: 'Token not found' });
-    }
-
-    // Strict multi-tenant isolation check: only Mouzy tokens can be claimed in ZuzyRun
-    const brand = token.brand;
-    const isMouzyToken = brand && (brand.slug === 'mouzy' || brand.slug === 'zuzyrun' || brand.slug === 'mouzy-runner');
-    if (!isMouzyToken) {
-      return res.status(403).json({
-        success: false,
-        error: 'This token does not belong to Mouzy (ZuzyRun)'
-      });
-    }
-
-    // 1. If token is already attached to a player and it is a different phone number, reject with 403
-    if (token.user && token.user.phone && token.user.phone !== phone) {
-      return res.status(403).json({
-        success: false,
-        error: 'Token already registered to another player'
-      });
-    }
-
-    // 2. Check expiry
-    const now = new Date();
-    if (token.expiresAt && new Date(token.expiresAt) < now) {
-      return res.status(400).json({
-        success: false,
-        error: 'Token has already expired'
-      });
-    }
-
-    if (token.livesRemaining <= 0 || token.status === 'EXHAUSTED') {
-      return res.status(400).json({
-        success: false,
-        error: 'Token has 0 lives remaining'
-      });
-    }
-
-    // Ensure player exists in user table
-    let user = await prisma.user.findFirst({ where: { phone } });
-    if (!user) {
-      const placeholderEmail = `${phone.replace(/\D/g, '')}@mouzy.gamefaktory.com`;
-      user = await prisma.user.create({
-        data: {
-          phone,
-          email: placeholderEmail,
-          name: 'Zuzy Runner',
-          role: 'PLAYER',
-          brandId: token.brandId,
-          lastPlayedAt: new Date()
-        }
-      });
-    }
-
-    // 3. If token already has an expires_at, keep it; otherwise calculate 11:59:59.999 PM IST today
-    const expiryDate = token.expiresAt || getEndOfDayIST(now);
-
-    const updatedToken = await prisma.qrToken.update({
-      where: { id: token.id },
-      data: {
-        userId: user.id,
-        claimedAt: token.claimedAt || new Date(),
-        expiresAt: expiryDate
-      },
-      include: { user: true }
-    });
-
-    return res.status(200).json({
-      success: true,
-      token: {
-        tokenId: updatedToken.code,
-        livesLeft: updatedToken.livesRemaining,
-        ownerPhone: updatedToken.user?.phone || phone,
-        expiresAt: updatedToken.expiresAt ? updatedToken.expiresAt.toISOString() : null
-      }
-    });
-  } catch (error) {
-    console.error('[V1 Claim Token Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to claim token' });
-  }
-});
-
-// 4. Batch Token Generation (POST /v1/tokens/batch)
-app.post(['/v1/tokens/batch', '/api/v1/tokens/batch'], async (req, res) => {
-  try {
-    const count = Math.min(Math.max(1, parseInt(req.body.count, 10) || 36), 500);
-    const lives = parseInt(req.body.lives, 10) || 3;
-    const prefix = (req.body.prefix || 'GLB').trim().toUpperCase();
-
-    // Resolve Brand "zuzyrun" / "mouzy"
-    const brand = await prisma.brand.findFirst({
-      where: {
-        OR: [{ slug: 'zuzyrun' }, { slug: 'mouzy' }, { slug: 'mouzy-runner' }]
-      }
-    });
-
-    if (!brand) {
-      return res.status(404).json({ success: false, error: 'Brand mouzy not found' });
-    }
-
-    // Helper: generate 10-char alphanumeric string
-    function generateTokenSuffix() {
-      const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // base32 without ambiguous chars
-      let result = '';
-      const bytes = crypto.randomBytes(10);
-      for (let i = 0; i < 10; i++) {
-        result += chars[bytes[i] % chars.length];
-      }
-      return result;
-    }
-
-    const qrRecords = [];
-    const createdTokens = [];
-
-    for (let i = 0; i < count; i++) {
-      let code = `${prefix}-${generateTokenSuffix()}`;
-      createdTokens.push(code);
-
-      qrRecords.push({
-        code,
-        brandId: brand.id,
-        gameSlug: 'zuzyrun',
-        initialLives: lives,
-        livesRemaining: lives,
-        status: 'ACTIVE'
-      });
-    }
-
-    await prisma.qrToken.createMany({
-      data: qrRecords,
-      skipDuplicates: true
-    });
-
-    return res.status(201).json({
-      success: true,
-      count: createdTokens.length,
-      tokens: createdTokens
-    });
-  } catch (error) {
-    console.error('[V1 Batch Tokens Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to batch generate tokens' });
   }
 });
 
@@ -1719,57 +1151,6 @@ app.post(
       const bestScore = userBrandSessions.length > 0 ? Math.max(...userBrandSessions.map((s) => s.score)) : finalScore;
       const totalScore = userBrandSessions.reduce((sum, s) => sum + s.score, 0);
 
-      // Also update User profile aggregated fields for fast lookups & leaderboard sync
-      try {
-        const todayIst = new Date(now.getTime() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
-        const existingUser = await prisma.user.findUnique({ where: { id: session.userId } });
-        if (existingUser) {
-          const isSameDay = existingUser.dailyLastPlayedAt === todayIst;
-          const currentDailyHigh = isSameDay ? (existingUser.dailyHighScore || 0) : 0;
-          const newDailyHigh = Math.max(currentDailyHigh, finalScore);
-
-          await prisma.user.update({
-            where: { id: session.userId },
-            data: {
-              highScore: Math.max(existingUser.highScore || 0, finalScore),
-              totalScore: BigInt(totalScore),
-              dailyHighScore: newDailyHigh,
-              dailyLastPlayedAt: todayIst,
-              lastPlayedAt: now
-            }
-          });
-
-          // Also sync BrandMember (Tenancy) metrics for this specific brand
-          await prisma.brandMember.upsert({
-            where: {
-              userId_brandId: {
-                userId: session.userId,
-                brandId: session.brandId
-              }
-            },
-            update: {
-              totalScore: BigInt(totalScore),
-              highScore: Math.max(existingUser.highScore || 0, finalScore),
-              dailyHighScore: newDailyHigh,
-              dailyLastPlayed: todayIst,
-              lastActiveAt: now
-            },
-            create: {
-              userId: session.userId,
-              brandId: session.brandId,
-              homeOutletId: existingUser.homeOutletId,
-              totalScore: BigInt(totalScore),
-              highScore: finalScore,
-              dailyHighScore: newDailyHigh,
-              dailyLastPlayed: todayIst,
-              lastActiveAt: now
-            }
-          });
-        }
-      } catch (userUpErr) {
-        console.warn('[End Session User Stats Sync Warning]:', userUpErr.message);
-      }
-
       // Remaining lives for token
       let livesRemaining = 0;
       if (tokenCode) {
@@ -2009,99 +1390,33 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
         brandId: { in: brandRes.brandIds },
         isCompleted: true,
       },
-      include: {
-        user: {
-          include: {
-            homeOutlet: true,
-            outlet: true,
-          }
-        }
-      },
+      include: { user: true },
       orderBy: { completedAt: 'desc' },
     });
 
     // 2. Also include users who claimed or have tokens under this brand
     const brandTokens = await prisma.qrToken.findMany({
       where: { brandId: { in: brandRes.brandIds }, userId: { not: null } },
-      include: {
-        user: {
-          include: {
-            homeOutlet: true,
-            outlet: true,
-          }
-        }
-      },
+      include: { user: true },
     });
 
     // 3. Also include users registered or credited under this brand
     const brandCredits = await prisma.gameplayCredit.findMany({
       where: { brandId: { in: brandRes.brandIds } },
-      include: {
-        user: {
-          include: {
-            homeOutlet: true,
-            outlet: true,
-          }
-        }
-      },
+      include: { user: true },
     });
-
-    // 4. INCLUDE ALL BRAND MEMBERS (Registered via QR token or portal even if they haven't played a game yet)
-    const brandMembers = await prisma.brandMember.findMany({
-      where: { brandId: { in: brandRes.brandIds } },
-      include: {
-        user: true,
-        homeOutlet: true,
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    // Helper to resolve player outlet or showroom location cleanly
-    function resolvePlayerOutletLabel(u, memberOutlet) {
-      if (memberOutlet?.name) return memberOutlet.name;
-      if (u?.homeOutlet?.name) return u.homeOutlet.name;
-      if (u?.outlet?.name) return u.outlet.name;
-      if (brand.slug === 'popular' || brand.slug === 'popular-electricals-qatar') {
-        return 'Najma / Barwa';
-      }
-      return 'Store Outlet';
-    }
 
     const playerMap = new Map();
-
-    // First populate from brand members (ensures everyone who registered is accounted for)
-    brandMembers.forEach((bm) => {
-      if (!bm.user) return;
-      playerMap.set(bm.userId, {
-        id: bm.user.id,
-        name: bm.user.name || (brand.slug.includes('mouzy') ? 'Mouzy Runner' : 'Sparky Runner'),
-        companyName: bm.user.companyName || null,
-        phone: bm.user.phone,
-        fullPhone: bm.user.phone ? (bm.user.phone.startsWith('+') ? bm.user.phone : `+974 ${bm.user.phone}`) : 'N/A',
-        showroom: resolvePlayerOutletLabel(bm.user, bm.homeOutlet),
-        homeOutletId: bm.homeOutletId || bm.user.homeOutletId || null,
-        homeOutlet: bm.homeOutlet?.name || bm.user.homeOutlet?.name || null,
-        bestScore: bm.highScore || 0,
-        totalScore: Number(bm.totalScore || 0),
-        gamesPlayed: 0,
-        registeredAt: bm.createdAt,
-        registeredVia: bm.registeredVia,
-        lastPlayed: bm.lastActiveAt || bm.createdAt,
-      });
-    });
 
     brandSessions.forEach((s) => {
       if (!s.user) return;
       if (!playerMap.has(s.userId)) {
         playerMap.set(s.userId, {
           id: s.user.id,
-          name: s.user.name || (brand.slug.includes('mouzy') ? 'Mouzy Runner' : 'Sparky Runner'),
-          companyName: s.user?.companyName || null,
+          name: s.user.name || 'Sparky Runner',
           phone: s.user.phone,
           fullPhone: s.user.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
-          showroom: resolvePlayerOutletLabel(s.user),
-          homeOutletId: s.user.homeOutletId || null,
-          homeOutlet: s.user.homeOutlet?.name || null,
+          showroom: 'Najma / Barwa',
           bestScore: s.score,
           totalScore: s.score,
           gamesPlayed: 1,
@@ -2110,11 +1425,8 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
       } else {
         const p = playerMap.get(s.userId);
         p.bestScore = Math.max(p.bestScore, s.score);
-        p.totalScore = Math.max(p.totalScore, p.totalScore + s.score);
+        p.totalScore += s.score;
         p.gamesPlayed += 1;
-        if (!p.lastPlayed || new Date(s.completedAt || s.startedAt) > new Date(p.lastPlayed)) {
-          p.lastPlayed = s.completedAt || s.startedAt;
-        }
       }
     });
 
@@ -2122,13 +1434,10 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
       if (t.user && !playerMap.has(t.userId)) {
         playerMap.set(t.userId, {
           id: t.user.id,
-          name: t.user.name || (brand.slug.includes('mouzy') ? 'Mouzy Runner' : 'Sparky Runner'),
-          companyName: t.user?.companyName || null,
+          name: t.user.name || 'Sparky Runner',
           phone: t.user.phone,
           fullPhone: t.user.phone ? (t.user.phone.startsWith('+') ? t.user.phone : `+974 ${t.user.phone}`) : 'N/A',
-          showroom: resolvePlayerOutletLabel(t.user),
-          homeOutletId: t.user.homeOutletId || null,
-          homeOutlet: t.user.homeOutlet?.name || null,
+          showroom: 'Showroom Counter',
           bestScore: 0,
           totalScore: 0,
           gamesPlayed: 0,
@@ -2141,13 +1450,10 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
       if (c.user && !playerMap.has(c.userId)) {
         playerMap.set(c.userId, {
           id: c.user.id,
-          name: c.user.name || (brand.slug.includes('mouzy') ? 'Mouzy Runner' : 'Sparky Runner'),
-          companyName: c.user?.companyName || null,
+          name: c.user.name || 'Sparky Runner',
           phone: c.user.phone,
           fullPhone: c.user.phone ? (c.user.phone.startsWith('+') ? c.user.phone : `+974 ${c.user.phone}`) : 'N/A',
-          showroom: resolvePlayerOutletLabel(c.user),
-          homeOutletId: c.user.homeOutletId || null,
-          homeOutlet: c.user.homeOutlet?.name || null,
+          showroom: 'Showroom Counter',
           bestScore: 0,
           totalScore: 0,
           gamesPlayed: 0,
@@ -2165,117 +1471,6 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
   } catch (err) {
     console.error('Fetch brand players error:', err);
     return res.status(500).json({ error: 'Failed to fetch brand players' });
-  }
-});
-
-// 4.1 Admin / Dashboard Endpoint: Delete a User and all their brand/game data completely
-app.delete(['/api/brands/:brandSlug/players/:userId', '/api/players/:userId'], async (req, res) => {
-  try {
-    const brandSlug = (req.params.brandSlug || 'popular').trim().toLowerCase();
-    const userId = req.params.userId;
-    if (!userId) {
-      return res.status(400).json({ error: 'User ID is required' });
-    }
-
-    const brandRes = await resolveBrandAndAliases(brandSlug);
-    const brandIds = brandRes ? brandRes.brandIds : [];
-
-    // Find the user first
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: userId },
-          { phone: userId },
-          { phone: userId.replace(/\D/g, '') },
-        ]
-      }
-    });
-
-    const targetUserId = user ? user.id : userId;
-    const userPhone = user?.phone;
-
-    // Execute atomic cleanup of all user records, sessions, tokens, coupons and member data
-    await prisma.$transaction(async (tx) => {
-      // 1. Delete Game Sessions
-      await tx.gameSession.deleteMany({
-        where: {
-          OR: [
-            { userId: targetUserId },
-            ...(userPhone ? [{ phone: userPhone }] : []),
-          ]
-        }
-      });
-
-      // 2. Delete Gameplay Credits
-      await tx.gameplayCredit.deleteMany({
-        where: {
-          OR: [
-            { userId: targetUserId },
-            ...(userPhone ? [{ phone: userPhone }] : []),
-          ]
-        }
-      });
-
-      // 3. Delete Brand Memberships
-      await tx.brandMember.deleteMany({
-        where: {
-          userId: targetUserId
-        }
-      });
-
-      // 4. Delete or unlink QR Tokens
-      await tx.qrToken.deleteMany({
-        where: {
-          userId: targetUserId
-        }
-      });
-
-      // 5. Delete User Coupons & Vouchers
-      await tx.userCoupon.deleteMany({
-        where: {
-          OR: [
-            { userId: targetUserId },
-            ...(userPhone ? [{ userPhone: userPhone }] : []),
-          ]
-        }
-      });
-
-      // 6. Delete Daily & Weekly wins
-      await tx.dailyWinner.deleteMany({
-        where: {
-          OR: [
-            { userId: targetUserId },
-            ...(userPhone ? [{ userPhone: userPhone }] : []),
-          ]
-        }
-      });
-
-      await tx.weeklySpecialGift.deleteMany({
-        where: {
-          OR: [
-            { userId: targetUserId },
-            ...(userPhone ? [{ winnerPhone: userPhone }] : []),
-          ]
-        }
-      });
-
-      // 7. Delete Sessions & Accounts if user exists
-      if (user) {
-        await tx.session.deleteMany({ where: { userId: user.id } });
-        await tx.account.deleteMany({ where: { userId: user.id } });
-        // Delete user record from database
-        await tx.user.delete({ where: { id: user.id } });
-      }
-    });
-
-    return res.json({
-      success: true,
-      message: `User ${userId} and all related data deleted successfully from database.`,
-      deletedUserId: targetUserId
-    });
-  } catch (err) {
-    console.error('Delete player error:', err);
-    return res.status(500).json({ error: 'Failed to delete user from database', details: err.message });
   }
 });
 
@@ -2520,156 +1715,6 @@ setInterval(async () => {
 }, 60000);
 
 
-// Helper: Calculate Daily Time Window for a Brand (defaults to brand timezone: IST +05:30 for railrolls, AST +03:00 for popular)
-function getDailyTimeWindow(referenceDate = new Date(), timezoneOffsetHours = 5.5) {
-  const offsetMs = timezoneOffsetHours * 60 * 60 * 1000;
-  const localTime = new Date(referenceDate.getTime() + offsetMs);
-  
-  const year = localTime.getUTCFullYear();
-  const month = localTime.getUTCMonth();
-  const date = localTime.getUTCDate();
-  
-  // Start of local day in absolute UTC
-  const startOfDay = new Date(Date.UTC(year, month, date) - offsetMs);
-  // End of local day in absolute UTC
-  const endOfDay = new Date(startOfDay.getTime() + 86400000 - 1);
-  
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const dateLabel = `${date} ${months[month]} ${year}`;
-  
-  return { startOfDay, endOfDay, dateLabel };
-}
-
-// 5a-1. DAILY LEADERBOARD: Filtered by today's date (00:00:00 to 23:59:59)
-app.get([
-  '/api/leaderboard/daily',
-  '/api/brands/:brandSlug/leaderboard/daily',
-  '/api/brands/:brandSlug/games/:gameSlug/leaderboard/daily'
-], async (req, res) => {
-  try {
-    const brandSlug = req.params.brandSlug || req.query.brand || req.query.brandSlug || 'railrolls';
-    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
-    const sortBy = (req.query.sortBy || 'bestScore').trim(); // 'bestScore' or 'totalScore'
-
-    // Determine timezone offset: RailRolls is India (IST UTC+5.5), Popular Electricals is Qatar (AST UTC+3)
-    const isIndiaBrand = brandSlug.toLowerCase().includes('railrolls');
-    const tzOffsetHours = isIndiaBrand ? 5.5 : 3.0;
-    const tzLabel = isIndiaBrand ? 'Asia/Kolkata (IST, UTC+5:30)' : 'Asia/Qatar (AST, UTC+3)';
-
-    const { startOfDay, endOfDay, dateLabel } = getDailyTimeWindow(new Date(), tzOffsetHours);
-
-    let whereClause = {
-      isCompleted: true,
-      completedAt: {
-        gte: startOfDay,
-        lte: endOfDay
-      }
-    };
-
-    let brandRes = null;
-    if (brandSlug) {
-      brandRes = await resolveBrandAndAliases(brandSlug);
-      if (brandRes) {
-        whereClause.brandId = { in: brandRes.brandIds };
-      }
-    }
-
-    // Retrieve all completed game sessions played today for this brand
-    const dailySessions = await prisma.gameSession.findMany({
-      where: whereClause,
-      orderBy: { completedAt: 'desc' },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            companyName: true
-          }
-        },
-        brand: {
-          select: {
-            id: true,
-            slug: true,
-            name: true
-          }
-        }
-      }
-    });
-
-    // Aggregate sessions per user for today
-    const userDailyMap = new Map();
-    dailySessions.forEach((s) => {
-      const uid = s.userId || s.id;
-      if (!userDailyMap.has(uid)) {
-        userDailyMap.set(uid, {
-          rank: 0,
-          id: s.id,
-          userId: s.userId,
-          customerId: s.userId,
-          name: s.user?.name || 'RailRolls Runner',
-          displayName: s.user?.name || 'RailRolls Runner',
-          companyName: s.user?.companyName || null,
-          phone: s.user?.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+91 ${s.user.phone}`) : 'N/A',
-          score: s.score,         // Normalized for generic UI components
-          bestScore: s.score,     // Highest single game score today
-          totalScore: s.score,    // Cumulative score today
-          grossScoreToday: s.score,
-          gamesPlayedToday: 1,
-          brand: s.brand?.name || brandRes?.primary?.name || 'RailRolls',
-          brandSlug: s.brand?.slug || brandRes?.primary?.slug || brandSlug,
-          playedAt: s.completedAt || s.startedAt
-        });
-      } else {
-        const entry = userDailyMap.get(uid);
-        entry.totalScore += s.score;
-        entry.grossScoreToday += s.score;
-        entry.gamesPlayedToday += 1;
-        if (s.score > entry.bestScore) {
-          entry.bestScore = s.score;
-        }
-        // Default `score` to bestScore (or totalScore if configured)
-        entry.score = entry.bestScore;
-        if (s.completedAt && (!entry.playedAt || new Date(s.completedAt) > new Date(entry.playedAt))) {
-          entry.playedAt = s.completedAt;
-        }
-      }
-    });
-
-    // Sort players: either by highest single game score or cumulative score today
-    const leaderboard = Array.from(userDailyMap.values())
-      .sort((a, b) => {
-        if (sortBy === 'totalScore') {
-          if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-          if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
-        } else {
-          if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
-          if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-        }
-        return (b.gamesPlayedToday || 0) - (a.gamesPlayedToday || 0);
-      })
-      .slice(0, limit)
-      .map((entry, idx) => ({
-        ...entry,
-        rank: idx + 1
-      }));
-
-    return res.json({
-      success: true,
-      period: 'DAILY',
-      timezone: tzLabel,
-      dateLabel,
-      dayStart: startOfDay.toISOString(),
-      dayEnd: endOfDay.toISOString(),
-      count: leaderboard.length,
-      leaderboard
-    });
-  } catch (err) {
-    console.error('[Daily Leaderboard Error]:', err);
-    return res.status(500).json({ error: 'Failed to fetch daily leaderboard' });
-  }
-});
-
 // 5b. ALL-TIME LEADERBOARD: Ranked by Cumulative Total Score across all games
 app.get([
   '/api/leaderboard/all-time',
@@ -2885,859 +1930,6 @@ app.get([
     count: leaderboard.length,
     leaderboard
   });
-});
-
-// ====================================================
-// ZUZYRUN (MOUZY) SPECIFIC LEADERBOARD & RANK ENDPOINTS
-// ====================================================
-
-// 1 & 2: Unified Leaderboard Endpoint
-// Supports:
-// - Global All-Time: GET /v1/leaderboards/global or GET /api/game/leaderboard?brand=mouzy&type=global
-// - Daily Outlet:    GET /v1/leaderboards/outlet/:outletId or GET /api/game/leaderboard?brand=mouzy&type=daily&outletId=:outletId
-app.get([
-  '/v1/leaderboards/global',
-  '/v1/leaderboards/outlet/:outletId',
-  '/api/game/leaderboard',
-  '/api/brands/:brandSlug/games/:gameSlug/leaderboard'
-], async (req, res) => {
-  try {
-    const brandSlug = (req.params.brandSlug || req.query.brand || req.query.brandSlug || 'mouzy').trim().toLowerCase();
-    const type = (req.query.type || (req.params.outletId ? 'daily' : 'global')).trim().toLowerCase();
-    const outletId = (req.params.outletId || req.query.outletId || '').trim();
-    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
-
-    const brandRes = await resolveBrandAndAliases(brandSlug);
-    if (!brandRes) return res.status(404).json({ success: false, error: `Brand '${brandSlug}' not found` });
-
-    if (type === 'daily' || outletId) {
-      // ----------------------------------------------------
-      // DAILY OUTLET LEADERBOARD
-      // ----------------------------------------------------
-      const todayIst = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
-
-      // Verify outlet exists and get name
-      let outlet = null;
-      if (outletId) {
-        outlet = await prisma.outlet.findUnique({
-          where: { id: outletId }
-        });
-      }
-
-      // Query active brand members in this outlet with daily score > 0 today
-      // Filter out admin / manager / staff accounts so only real players appear on the leaderboard
-      const whereCondition = {
-        brandId: { in: brandRes.brandIds },
-        user: { role: 'PLAYER' },
-        ...(outletId ? { homeOutletId: outletId } : {}),
-      };
-
-      const members = await prisma.brandMember.findMany({
-        where: whereCondition,
-        include: {
-          user: true,
-          homeOutlet: true
-        },
-        orderBy: [
-          { dailyHighScore: 'desc' },
-          { highScore: 'desc' },
-          { totalScore: 'desc' }
-        ],
-        take: limit
-      });
-
-      const data = members.map((m, idx) => ({
-        rank: idx + 1,
-        name: m.user?.name || 'Zuzy Runner',
-        dailyHighScore: m.dailyLastPlayed === todayIst ? (m.dailyHighScore || 0) : 0,
-        highScore: m.highScore || 0,
-        totalScore: Number(m.totalScore || 0),
-        homeOutlet: m.homeOutlet?.name || outlet?.name || 'Store Outlet',
-        homeOutletId: m.homeOutletId || outletId || null
-      }));
-
-      return res.json({
-        success: true,
-        type: 'daily',
-        outletId: outletId || null,
-        outletName: outlet?.name || (data[0]?.homeOutlet) || 'Store Outlet',
-        date: todayIst,
-        count: data.length,
-        data,
-        leaderboard: data // dual compatibility for frontend consumers
-      });
-    }
-
-    // ----------------------------------------------------
-    // GLOBAL ALL-TIME LEADERBOARD
-    // ----------------------------------------------------
-    // Only real players should appear on the leaderboard
-    const members = await prisma.brandMember.findMany({
-      where: {
-        brandId: { in: brandRes.brandIds },
-        user: { role: 'PLAYER' }
-      },
-      include: {
-        user: true,
-        homeOutlet: true
-      },
-      orderBy: [
-        { totalScore: 'desc' },
-        { highScore: 'desc' }
-      ],
-      take: limit
-    });
-
-    const data = members.map((m, idx) => ({
-      rank: idx + 1,
-      name: m.user?.name || 'Zuzy Runner',
-      totalScore: Number(m.totalScore || 0),
-      highScore: m.highScore || 0,
-      homeOutlet: m.homeOutlet?.name || 'Store Outlet',
-      homeOutletId: m.homeOutletId || null
-    }));
-
-    return res.json({
-      success: true,
-      type: 'global',
-      count: data.length,
-      data,
-      leaderboard: data // dual compatibility for frontend consumers
-    });
-  } catch (err) {
-    console.error('[ZuzyRun Leaderboard Error]:', err);
-    return res.status(500).json({ success: false, error: 'Failed to retrieve leaderboard' });
-  }
-});
-
-// 3. Player Global Rank Position Calculator
-// Supports: GET /v1/leaderboards/rank?score=X or GET /api/game/rank?brand=mouzy&score=X
-app.get([
-  '/v1/leaderboards/rank',
-  '/api/game/rank',
-  '/api/brands/:brandSlug/games/:gameSlug/rank'
-], async (req, res) => {
-  try {
-    const brandSlug = (req.params.brandSlug || req.query.brand || req.query.brandSlug || 'mouzy').trim().toLowerCase();
-    const rawScore = req.query.score !== undefined ? req.query.score : (req.query.totalScore || 0);
-    const totalScore = Math.max(0, parseInt(rawScore, 10) || 0);
-
-    const brandRes = await resolveBrandAndAliases(brandSlug);
-    if (!brandRes) return res.status(404).json({ success: false, error: `Brand '${brandSlug}' not found` });
-
-    // Count how many brand members have a totalScore strictly greater than totalScore
-    // Filter by role: 'PLAYER' so admin accounts don't inflate ranks
-    const higherCount = await prisma.brandMember.count({
-      where: {
-        brandId: { in: brandRes.brandIds },
-        user: { role: 'PLAYER' },
-        totalScore: { gt: BigInt(totalScore) }
-      }
-    });
-
-    const rank = higherCount + 1;
-
-    return res.json({
-      success: true,
-      brand: brandRes.primary.slug,
-      totalScore,
-      rank,
-      count: rank // dual compatibility with Firebase getPlayerGlobalRank response { count: rank }
-    });
-  } catch (err) {
-    console.error('[Player Rank Error]:', err);
-    return res.status(500).json({ success: false, error: 'Failed to calculate player rank' });
-  }
-});
-
-// ====================================================
-// ZUZYRUN (MOUZY) STORE REWARDS & COUPON REDEMPTION
-// ====================================================
-
-// 1. Redeem Points for Store Reward
-// POST /api/game/rewards/redeem or /v1/rewards/redeem
-app.post(['/api/game/rewards/redeem', '/v1/rewards/redeem'], async (req, res) => {
-  try {
-    const brandSlugInput = (req.body.brand || req.body.brandSlug || 'mouzy').trim().toLowerCase();
-    const phoneInput = (req.body.phone || req.body.userPhone || '').trim();
-    const rewardLabel = (req.body.rewardLabel || req.body.rewardTitle || '').trim();
-    const pointsRequired = parseInt(req.body.pointsRequired || req.body.pointsSpent, 10);
-
-    if (!phoneInput) {
-      return res.status(400).json({ success: false, error: 'Phone number is required' });
-    }
-    if (!rewardLabel) {
-      return res.status(400).json({ success: false, error: 'Reward label is required' });
-    }
-    if (isNaN(pointsRequired) || pointsRequired <= 0) {
-      return res.status(400).json({ success: false, error: 'Valid pointsRequired is required' });
-    }
-
-    const brandRes = await resolveBrandAndAliases(brandSlugInput);
-    if (!brandRes) {
-      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
-    }
-
-    // Clean phone number: keep exact phone or last 10 digits
-    const cleanPhoneDigits = phoneInput.replace(/\D/g, '').slice(-10);
-
-    // Run atomically in transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Fetch user by phone
-      // Prioritize exact phone match first, then alternative formatted variations
-      const user = await tx.user.findFirst({
-        where: {
-          OR: [
-            { phone: phoneInput },
-            { phone: cleanPhoneDigits },
-            { phone: `+91${cleanPhoneDigits}` },
-            { phone: `+91 ${cleanPhoneDigits}` }
-          ]
-        },
-        orderBy: [
-          // Order by totalScore DESC to prioritize active player profile if duplicate formatting exists
-          { totalScore: 'desc' },
-          { createdAt: 'desc' }
-        ]
-      });
-
-      if (!user) {
-        throw new Error('USER_NOT_FOUND');
-      }
-
-      // Check user membership for brand (Strict Brand Isolation)
-      const member = await tx.brandMember.findFirst({
-        where: {
-          userId: user.id,
-          brandId: { in: brandRes.brandIds }
-        }
-      });
-
-      // Strict Brand Isolation: Points earned under Mouzy belong to Mouzy, Popular to Popular, etc.
-      // If member record exists, spend that brand's balance. If player is only registered on global user, use totalScore.
-      const currentScore = member ? Number(member.totalScore) : (user.brandId && brandRes.matchesBrandId(user.brandId) ? Number(user.totalScore) : 0);
-
-      if (currentScore < pointsRequired) {
-        const err = new Error('INSUFFICIENT_POINTS');
-        err.currentScore = currentScore;
-        throw err;
-      }
-
-      // 2. Decrement score strictly from the player's brand balance
-      let remainingScore = currentScore - pointsRequired;
-      if (member) {
-        const updatedMember = await tx.brandMember.update({
-          where: { id: member.id },
-          data: {
-            totalScore: { decrement: BigInt(pointsRequired) }
-          }
-        });
-        remainingScore = Number(updatedMember.totalScore);
-      }
-
-      // Also adjust user totalScore if this user belongs directly to this brand
-      if (!user.brandId || brandRes.matchesBrandId(user.brandId)) {
-        await tx.user.update({
-          where: { id: user.id },
-          data: {
-            totalScore: { decrement: BigInt(pointsRequired) }
-          }
-        });
-      }
-
-      // 3. Generate random coupon code: MZ-XXXXXX
-      const randomPart = crypto.randomBytes(3).toString('hex').toUpperCase(); // 6 chars
-      const couponCode = `MZ-${randomPart}`;
-
-      // 4. Insert into user_coupons
-      const coupon = await tx.userCoupon.create({
-        data: {
-          couponCode,
-          brandSlug: brandRes.primary.slug,
-          brandId: brandRes.primary.id,
-          userPhone: user.phone || phoneInput,
-          playerName: user.name || 'Zuzy Runner',
-          rewardLabel,
-          pointsSpent: pointsRequired,
-          redeemed: false,
-          outletId: member?.homeOutletId || user.homeOutletId || null
-        }
-      });
-
-      return {
-        couponCode: coupon.couponCode,
-        rewardLabel: coupon.rewardLabel,
-        pointsSpent: coupon.pointsSpent,
-        totalScoreRemaining: remainingScore
-      };
-    });
-
-    return res.json({
-      success: true,
-      couponCode: result.couponCode,
-      rewardLabel: result.rewardLabel,
-      pointsSpent: result.pointsSpent,
-      totalScoreRemaining: result.totalScoreRemaining
-    });
-  } catch (error) {
-    if (error.message === 'USER_NOT_FOUND') {
-      return res.status(404).json({ success: false, error: 'User not found with this phone number' });
-    }
-    if (error.message === 'INSUFFICIENT_POINTS') {
-      return res.status(400).json({
-        success: false,
-        error: 'Insufficient points to redeem this reward',
-        currentScore: error.currentScore
-      });
-    }
-    console.error('[Redeem Store Reward Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to redeem reward' });
-  }
-});
-
-// 2. Fetch Player's Redeemed Coupons
-// GET /api/game/rewards/my-coupons?brand=mouzy&phone=:phone
-app.get(['/api/game/rewards/my-coupons', '/v1/rewards/my-coupons'], async (req, res) => {
-  try {
-    const brandSlugInput = (req.query.brand || req.query.brandSlug || 'mouzy').trim().toLowerCase();
-    const phoneInput = (req.query.phone || req.query.userPhone || '').trim();
-
-    if (!phoneInput) {
-      return res.status(400).json({ success: false, error: 'Phone parameter is required' });
-    }
-
-    const brandRes = await resolveBrandAndAliases(brandSlugInput);
-    if (!brandRes) {
-      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
-    }
-
-    const cleanPhoneDigits = phoneInput.replace(/\D/g, '').slice(-10);
-
-    const coupons = await prisma.userCoupon.findMany({
-      where: {
-        brandSlug: { in: [brandRes.primary.slug, ...brandRes.brandSlugs] },
-        OR: [
-          { userPhone: phoneInput },
-          { userPhone: cleanPhoneDigits },
-          { userPhone: `+91${cleanPhoneDigits}` },
-          { userPhone: `+91 ${cleanPhoneDigits}` }
-        ]
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    return res.json({
-      success: true,
-      coupons: coupons.map(c => ({
-        couponCode: c.couponCode,
-        rewardLabel: c.rewardLabel,
-        pointsSpent: c.pointsSpent,
-        redeemed: c.redeemed,
-        redeemedAt: c.redeemedAt,
-        createdAt: c.createdAt,
-        outletId: c.outletId
-      }))
-    });
-  } catch (error) {
-    console.error('[Fetch My Coupons Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to fetch player coupons' });
-  }
-});
-
-// 3. Store Staff Coupon Consumption (For Outlet Admin / Cashier)
-// POST /api/game/rewards/verify-coupon or /v1/rewards/verify-coupon
-app.post(['/api/game/rewards/verify-coupon', '/v1/rewards/verify-coupon'], async (req, res) => {
-  try {
-    const brandSlugInput = (req.body.brand || req.body.brandSlug || 'mouzy').trim().toLowerCase();
-    const couponCode = (req.body.couponCode || req.body.code || '').trim().toUpperCase();
-    const outletId = (req.body.outletId || '').trim();
-
-    if (!couponCode) {
-      return res.status(400).json({ success: false, error: 'Coupon code is required' });
-    }
-
-    const brandRes = await resolveBrandAndAliases(brandSlugInput);
-    if (!brandRes) {
-      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
-    }
-
-    // 1. Look up coupon
-    const coupon = await prisma.userCoupon.findUnique({
-      where: { couponCode }
-    });
-
-    if (!coupon) {
-      return res.status(404).json({ success: false, error: 'Invalid coupon code. Coupon not found.' });
-    }
-
-    // Check brand match
-    if (coupon.brandSlug !== brandRes.primary.slug && !brandRes.brandSlugs.includes(coupon.brandSlug)) {
-      return res.status(400).json({ success: false, error: `Coupon is not valid for brand '${brandSlugInput}'` });
-    }
-
-    // 2. Check if already redeemed
-    if (coupon.redeemed) {
-      return res.status(400).json({
-        success: false,
-        error: 'Coupon already redeemed',
-        redeemedAt: coupon.redeemedAt,
-        outletId: coupon.outletId
-      });
-    }
-
-    // 3. Mark as redeemed
-    const now = new Date();
-    const updated = await prisma.userCoupon.update({
-      where: { couponCode },
-      data: {
-        redeemed: true,
-        outletId: outletId || coupon.outletId,
-        redeemedAt: now
-      }
-    });
-
-    return res.json({
-      success: true,
-      message: 'Coupon successfully redeemed in store',
-      coupon: {
-        couponCode: updated.couponCode,
-        rewardLabel: updated.rewardLabel,
-        playerName: updated.playerName,
-        pointsSpent: updated.pointsSpent,
-        redeemed: updated.redeemed,
-        redeemedAt: updated.redeemedAt,
-        outletId: updated.outletId
-      }
-    });
-  } catch (error) {
-    console.error('[Verify Coupon Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to verify and redeem coupon' });
-  }
-});
-
-// ====================================================
-// MULTI-TENANT DAILY WINNERS CRON ENGINE & HISTORY
-// ====================================================
-
-// Brand-specific default reward configurations (can also be overridden in DB)
-const BRAND_DAILY_REWARDS_CONFIG = {
-  mouzy: [
-    { rank: 1, label: 'Free Supreme Avil Milk', tier: 1 },
-    { rank: 2, label: 'Free Special Avil Milk', tier: 2 },
-    { rank: 3, label: 'Free Regular Avil Milk', tier: 3 }
-  ],
-  sparky: [
-    { rank: 1, label: 'Popular 50 QAR Shopping Voucher', tier: 1 },
-    { rank: 2, label: 'Popular Gift Hamper', tier: 2 },
-    { rank: 3, label: 'Popular Special Cap', tier: 3 }
-  ],
-  popular: [
-    { rank: 1, label: 'Popular 50 QAR Shopping Voucher', tier: 1 },
-    { rank: 2, label: 'Popular Gift Hamper', tier: 2 },
-    { rank: 3, label: 'Popular Special Cap', tier: 3 }
-  ],
-  railrolls: [
-    { rank: 1, label: 'Free Roll Meal Combo', tier: 1 },
-    { rank: 2, label: 'Free Single Roll', tier: 2 },
-    { rank: 3, label: 'Free Signature Beverage', tier: 3 }
-  ]
-};
-
-/**
- * Aggregates and records daily winners for a specific date (YYYY-MM-DD in Asia/Kolkata)
- * @param {string} targetDate - 'YYYY-MM-DD'
- * @param {string|null} brandSlugFilter - optional specific brand slug
- */
-async function aggregateDailyWinnersForDate(targetDate, brandSlugFilter = null) {
-  const results = [];
-  
-  // 1. Identify brands to process
-  const brands = await prisma.brand.findMany({
-    where: brandSlugFilter ? { slug: brandSlugFilter.trim().toLowerCase() } : {}
-  });
-
-  for (const brand of brands) {
-    const brandSlug = brand.slug.toLowerCase();
-    const rewardTiers = BRAND_DAILY_REWARDS_CONFIG[brandSlug] || BRAND_DAILY_REWARDS_CONFIG.mouzy;
-    const topN = rewardTiers.length || 3;
-
-    // 2. Fetch all active outlets under this brand
-    const outlets = await prisma.outlet.findMany({
-      where: { brandId: brand.id, status: 'active' }
-    });
-
-    for (const outlet of outlets) {
-      // 3. Extract top N real players who played on targetDate
-      // Ranks by dailyHighScore DESC, highScore DESC, totalScore DESC
-      const topMembers = await prisma.brandMember.findMany({
-        where: {
-          brandId: brand.id,
-          homeOutletId: outlet.id,
-          dailyLastPlayed: targetDate,
-          dailyHighScore: { gt: 0 },
-          user: { role: 'PLAYER' }
-        },
-        include: {
-          user: true
-        },
-        orderBy: [
-          { dailyHighScore: 'desc' },
-          { highScore: 'desc' },
-          { totalScore: 'desc' }
-        ],
-        take: topN
-      });
-
-      // If no members with dailyLastPlayed match targetDate, check if members played that day
-      let membersToRank = topMembers;
-      if (membersToRank.length === 0) {
-        // Fallback: If cron runs after daily scores reset or for testing, query top active members of this outlet
-        membersToRank = await prisma.brandMember.findMany({
-          where: {
-            brandId: brand.id,
-            homeOutletId: outlet.id,
-            highScore: { gt: 0 },
-            user: { role: 'PLAYER' }
-          },
-          include: {
-            user: true
-          },
-          orderBy: [
-            { highScore: 'desc' },
-            { totalScore: 'desc' }
-          ],
-          take: topN
-        });
-      }
-
-      for (let i = 0; i < membersToRank.length; i++) {
-        const member = membersToRank[i];
-        const rank = i + 1;
-        const rewardTier = rewardTiers.find(r => r.rank === rank) || { label: `Rank ${rank} Reward`, rank };
-
-        // Generate clean unique win ID: DW-{OUTLET_PREFIX}-{RANDOM6}
-        const outletClean = (outlet.id.split('-').pop() || 'OUTLET').toUpperCase().replace(/[^A-Z0-9]/g, '');
-        const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase();
-        const winId = `DW-${outletClean}-${randomHex}`;
-
-        const userPhone = member.user?.phone || `unknown_${member.userId}`;
-        const playerName = member.user?.name || 'Zuzy Runner';
-        const dailyHighScore = member.dailyLastPlayed === targetDate ? member.dailyHighScore : member.highScore;
-
-        // Upsert to ensure idempotency if cron runs multiple times
-        const existingWin = await prisma.dailyWinner.findFirst({
-          where: {
-            brand: brandSlug,
-            outletId: outlet.id,
-            winDate: targetDate,
-            rank
-          }
-        });
-
-        if (!existingWin) {
-          const created = await prisma.dailyWinner.create({
-            data: {
-              brand: brandSlug,
-              brandId: brand.id,
-              outletId: outlet.id,
-              winDate: targetDate,
-              rank,
-              winId,
-              userPhone,
-              playerName,
-              dailyHighScore,
-              totalScore: member.totalScore,
-              rewardMetadata: rewardTier,
-              redeemed: false
-            }
-          });
-          results.push(created);
-        }
-      }
-    }
-  }
-
-  return results;
-}
-
-// ----------------------------------------------------
-// CRON RUNNER (Runs daily at midnight IST)
-// ----------------------------------------------------
-function initDailyWinnersCron() {
-  const checkIntervalMs = 60 * 1000; // Check every 60 seconds
-  let lastProcessedDate = null;
-
-  setInterval(async () => {
-    try {
-      // Calculate current date and time in Asia/Kolkata (IST = UTC+5.5)
-      const nowIst = new Date(Date.now() + 5.5 * 3600 * 1000);
-      const hours = nowIst.getUTCHours();
-      const minutes = nowIst.getUTCMinutes();
-      const todayDateStr = nowIst.toISOString().slice(0, 10);
-
-      // Trigger at 00:01 - 00:05 IST to snapshot yesterday's winners
-      if (hours === 0 && minutes >= 1 && minutes <= 5) {
-        // Yesterday's date in IST
-        const yesterdayIst = new Date(nowIst.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-        if (lastProcessedDate !== yesterdayIst) {
-          console.log(`[Daily Winners Cron] Aggregating winners for yesterday: ${yesterdayIst}...`);
-          const created = await aggregateDailyWinnersForDate(yesterdayIst);
-          lastProcessedDate = yesterdayIst;
-          console.log(`[Daily Winners Cron] Aggregated ${created.length} winners for ${yesterdayIst}.`);
-        }
-      }
-    } catch (err) {
-      console.error('[Daily Winners Cron Error]:', err);
-    }
-  }, checkIntervalMs);
-
-  console.log('✓ Multi-Tenant Daily Winners Cron Engine initialized (Asia/Kolkata Midnight Aggregator)');
-}
-
-// Start the cron engine
-initDailyWinnersCron();
-
-// ----------------------------------------------------
-// MULTI-TENANT API ENDPOINTS
-// ----------------------------------------------------
-
-// A. Check if Player Won Yesterday
-// GET /api/game/rewards/check-win?brand=mouzy&outletId=:outletId&phone=:phone
-app.get(['/api/game/rewards/check-win', '/v1/rewards/check-win'], async (req, res) => {
-  try {
-    const brandSlugInput = (req.query.brand || req.query.brandSlug || 'mouzy').trim().toLowerCase();
-    const outletId = (req.query.outletId || '').trim();
-    const phoneInput = (req.query.phone || req.query.userPhone || '').trim();
-    const requestedDate = (req.query.date || '').trim();
-
-    if (!phoneInput) {
-      return res.status(400).json({ success: false, error: 'Phone parameter is required' });
-    }
-
-    const brandRes = await resolveBrandAndAliases(brandSlugInput);
-    if (!brandRes) {
-      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
-    }
-
-    // Default target date: Yesterday in Asia/Kolkata (IST = UTC+5.5)
-    let targetDate = requestedDate;
-    if (!targetDate) {
-      const nowIst = new Date(Date.now() + 5.5 * 3600 * 1000);
-      targetDate = new Date(nowIst.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-    }
-
-    const cleanPhoneDigits = phoneInput.replace(/\D/g, '').slice(-10);
-
-    // Look up winner in daily_winners table
-    const winner = await prisma.dailyWinner.findFirst({
-      where: {
-        brand: { in: [brandRes.primary.slug, ...brandRes.brandSlugs] },
-        ...(outletId ? { outletId } : {}),
-        winDate: targetDate,
-        OR: [
-          { userPhone: phoneInput },
-          { userPhone: cleanPhoneDigits },
-          { userPhone: `+91${cleanPhoneDigits}` },
-          { userPhone: `+91 ${cleanPhoneDigits}` },
-          { user: { phone: phoneInput } },
-          { user: { phone: cleanPhoneDigits } },
-          { user: { phone: `+91${cleanPhoneDigits}` } }
-        ]
-      },
-      include: {
-        outlet: true
-      }
-    });
-
-    if (!winner) {
-      return res.json({
-        success: true,
-        brand: brandRes.primary.slug,
-        win: null
-      });
-    }
-
-    return res.json({
-      success: true,
-      brand: brandRes.primary.slug,
-      win: {
-        winId: winner.winId,
-        rank: winner.rank,
-        name: winner.playerName,
-        dailyHighScore: winner.dailyHighScore,
-        reward: winner.rewardMetadata,
-        date: winner.winDate,
-        redeemed: winner.redeemed,
-        redeemedAt: winner.redeemedAt,
-        outletId: winner.outletId,
-        outletName: winner.outlet?.name || 'Store Outlet'
-      }
-    });
-  } catch (error) {
-    console.error('[Check Daily Win Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to check winner status' });
-  }
-});
-
-// B. Fetch Historical Winners (For Outlet Manager or Player History)
-// GET /api/game/rewards/toppers-history?brand=mouzy&outletId=:outletId&limitDays=30
-app.get(['/api/game/rewards/toppers-history', '/v1/rewards/toppers-history'], async (req, res) => {
-  try {
-    const brandSlugInput = (req.query.brand || req.query.brandSlug || 'mouzy').trim().toLowerCase();
-    const outletId = (req.query.outletId || '').trim();
-    const limitDays = Math.min(Math.max(1, parseInt(req.query.limitDays, 10) || 30), 90);
-
-    const brandRes = await resolveBrandAndAliases(brandSlugInput);
-    if (!brandRes) {
-      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
-    }
-
-    // Query daily winners for this brand and outlet
-    const winners = await prisma.dailyWinner.findMany({
-      where: {
-        brand: { in: [brandRes.primary.slug, ...brandRes.brandSlugs] },
-        ...(outletId ? { outletId } : {})
-      },
-      orderBy: [
-        { winDate: 'desc' },
-        { rank: 'asc' }
-      ]
-    });
-
-    // Group winners by winDate
-    const historyMap = new Map();
-    for (const w of winners) {
-      if (!historyMap.has(w.winDate)) {
-        historyMap.set(w.winDate, []);
-      }
-      historyMap.get(w.winDate).push({
-        rank: w.rank,
-        name: w.playerName,
-        phone: w.userPhone,
-        highScore: w.dailyHighScore,
-        winId: w.winId,
-        reward: w.rewardMetadata,
-        redeemed: w.redeemed,
-        redeemedAt: w.redeemedAt
-      });
-    }
-
-    // Format as array limited to limitDays
-    const history = Array.from(historyMap.entries())
-      .slice(0, limitDays)
-      .map(([date, toppers]) => ({
-        date,
-        toppers
-      }));
-
-    return res.json({
-      success: true,
-      brand: brandRes.primary.slug,
-      outletId: outletId || 'all',
-      count: history.length,
-      history
-    });
-  } catch (error) {
-    console.error('[Toppers History Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to retrieve toppers history' });
-  }
-});
-
-// C. Redeem Daily Topper Voucher (In-Store Staff Consumption)
-// POST /api/game/rewards/redeem-topper
-app.post(['/api/game/rewards/redeem-topper', '/v1/rewards/redeem-topper'], async (req, res) => {
-  try {
-    const brandSlugInput = (req.body.brand || req.body.brandSlug || 'mouzy').trim().toLowerCase();
-    const winId = (req.body.winId || req.body.code || '').trim().toUpperCase();
-    const outletId = (req.body.outletId || '').trim();
-
-    if (!winId) {
-      return res.status(400).json({ success: false, error: 'Win ID is required' });
-    }
-
-    const brandRes = await resolveBrandAndAliases(brandSlugInput);
-    if (!brandRes) {
-      return res.status(404).json({ success: false, error: `Brand '${brandSlugInput}' not found` });
-    }
-
-    // 1. Find daily winner voucher
-    const winner = await prisma.dailyWinner.findUnique({
-      where: { winId }
-    });
-
-    if (!winner) {
-      return res.status(404).json({ success: false, error: 'Invalid win ID. Voucher not found.' });
-    }
-
-    // Brand isolation check
-    if (winner.brand !== brandRes.primary.slug && !brandRes.brandSlugs.includes(winner.brand)) {
-      return res.status(400).json({ success: false, error: `Voucher is not valid for brand '${brandSlugInput}'` });
-    }
-
-    // 2. Check if already redeemed
-    if (winner.redeemed) {
-      return res.status(400).json({
-        success: false,
-        error: 'Daily topper voucher has already been redeemed',
-        redeemedAt: winner.redeemedAt
-      });
-    }
-
-    // 3. Mark as redeemed
-    const now = new Date();
-    const updated = await prisma.dailyWinner.update({
-      where: { winId },
-      data: {
-        redeemed: true,
-        redeemedAt: now,
-        ...(outletId ? { outletId } : {})
-      }
-    });
-
-    return res.json({
-      success: true,
-      brand: brandRes.primary.slug,
-      message: 'Daily topper voucher successfully redeemed',
-      voucher: {
-        winId: updated.winId,
-        playerName: updated.playerName,
-        rank: updated.rank,
-        reward: updated.rewardMetadata,
-        date: updated.winDate,
-        redeemed: updated.redeemed,
-        redeemedAt: updated.redeemedAt
-      }
-    });
-  } catch (error) {
-    console.error('[Redeem Topper Voucher Error]:', error);
-    return res.status(500).json({ success: false, error: 'Failed to redeem topper voucher' });
-  }
-});
-
-// Dev/Admin Trigger Endpoint to manually run Daily Winners Aggregation
-app.post('/api/admin/cron/daily-winners/trigger', async (req, res) => {
-  try {
-    const brandSlug = req.body.brand || null;
-    const nowIst = new Date(Date.now() + 5.5 * 3600 * 1000);
-    const targetDate = req.body.date || new Date(nowIst.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-    
-    const results = await aggregateDailyWinnersForDate(targetDate, brandSlug);
-    return res.json({
-      success: true,
-      message: `Triggered daily winners snapshot for ${targetDate}`,
-      count: results.length,
-      winners: results.map(r => ({
-        winId: r.winId,
-        brand: r.brand,
-        outletId: r.outletId,
-        rank: r.rank,
-        name: r.playerName,
-        reward: r.rewardMetadata
-      }))
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
 });
 
 // ====================================================
@@ -4545,13 +2737,12 @@ app.post('/api/admin/brands/reset-all', async (req, res) => {
 // 3. Admin / Superadmin Login Verification (for brand dashboard access)
 app.post('/api/admin/login', async (req, res) => {
   try {
-    const rawIdentifier = req.body.identifier || req.body.username || req.body.email;
-    const { password, brandSlug } = req.body;
-    if (!rawIdentifier || !password) {
+    const { identifier, password, brandSlug } = req.body;
+    if (!identifier || !password) {
       return res.status(400).json({ error: 'Username/Email and password are required' });
     }
 
-    const cleanIdentifier = String(rawIdentifier).trim().toLowerCase();
+    const cleanIdentifier = identifier.trim().toLowerCase();
     const user = await prisma.user.findFirst({
       where: {
         OR: [
@@ -4560,8 +2751,7 @@ app.post('/api/admin/login', async (req, res) => {
         ]
       },
       include: {
-        brand: true,
-        outlet: true
+        brand: true
       }
     });
 
@@ -4569,7 +2759,7 @@ app.post('/api/admin/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    if (!['SUPERADMIN', 'ADMIN', 'CORE_ADMIN', 'OUTLET_ADMIN'].includes(user.role)) {
+    if (!['SUPERADMIN', 'ADMIN', 'CORE_ADMIN'].includes(user.role)) {
       return res.status(403).json({ error: 'Access denied: User is not an authorized administrator' });
     }
 
@@ -4599,13 +2789,6 @@ app.post('/api/admin/login', async (req, res) => {
         name: user.name,
         role: user.role,
         brandId: user.brandId,
-        outletId: user.outletId,
-        outlet: user.outlet ? {
-          id: user.outlet.id,
-          name: user.outlet.name,
-          place: user.outlet.place,
-          countryCode: user.outlet.countryCode
-        } : null,
         brand: user.brand ? {
           id: user.brand.id,
           name: user.brand.name,
