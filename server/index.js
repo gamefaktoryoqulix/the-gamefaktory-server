@@ -1414,6 +1414,7 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
         playerMap.set(s.userId, {
           id: s.user.id,
           name: s.user.name || 'Sparky Runner',
+          companyName: s.user.companyName || undefined,
           phone: s.user.phone,
           fullPhone: s.user.phone ? (s.user.phone.startsWith('+') ? s.user.phone : `+974 ${s.user.phone}`) : 'N/A',
           showroom: 'Najma / Barwa',
@@ -1424,6 +1425,7 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
         });
       } else {
         const p = playerMap.get(s.userId);
+        if (!p.companyName && s.user.companyName) p.companyName = s.user.companyName;
         p.bestScore = Math.max(p.bestScore, s.score);
         p.totalScore += s.score;
         p.gamesPlayed += 1;
@@ -1435,6 +1437,7 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
         playerMap.set(t.userId, {
           id: t.user.id,
           name: t.user.name || 'Sparky Runner',
+          companyName: t.user.companyName || undefined,
           phone: t.user.phone,
           fullPhone: t.user.phone ? (t.user.phone.startsWith('+') ? t.user.phone : `+974 ${t.user.phone}`) : 'N/A',
           showroom: 'Showroom Counter',
@@ -1451,6 +1454,7 @@ app.get(['/api/brands/:brandSlug/players', '/api/players'], async (req, res) => 
         playerMap.set(c.userId, {
           id: c.user.id,
           name: c.user.name || 'Sparky Runner',
+          companyName: c.user.companyName || undefined,
           phone: c.user.phone,
           fullPhone: c.user.phone ? (c.user.phone.startsWith('+') ? c.user.phone : `+974 ${c.user.phone}`) : 'N/A',
           showroom: 'Showroom Counter',
