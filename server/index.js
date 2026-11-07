@@ -1180,7 +1180,7 @@ app.post(
   }
 );
 
-// 3. Admin / Dashboard Endpoint: Fetch All Sessions for a Specific User under that Brand Only
+// 3. Admin / Dashboard Endpoint: Fetch Brand Game Sessions (with optional user or date filtering)
 app.get(
   [
     '/api/brands/:brandSlug/players/:userId/sessions',
@@ -1192,9 +1192,10 @@ app.get(
       const brandSlug = (req.params.brandSlug || 'popular').trim().toLowerCase();
       const userId = req.params.userId || req.query.userId;
       const phone = req.query.phone;
+      const dateParam = req.query.date;
 
       const brandRes = await resolveBrandAndAliases(brandSlug);
-      if (!brandRes) return res.status(404).json({ error: `Brand '${brandSlug}' not found` });
+      if (!brandRes) return res.status(404).json({ error: 'Brand not found' });
       const brand = brandRes.primary;
 
       let user = null;
@@ -1205,16 +1206,39 @@ app.get(
         user = await prisma.user.findUnique({ where: { phone: clean } });
       }
 
-      if (!user) {
+      const whereClause = {
+        brandId: { in: brandRes.brandIds },
+        isCompleted: true,
+      };
+
+      if (user) {
+        whereClause.userId = user.id;
+      } else if (userId || phone) {
         return res.status(404).json({ error: 'Player not found in database' });
       }
 
-      // Query sessions matching brandId in brandIds (including aliases)
+      if (dateParam && typeof dateParam === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateParam.trim())) {
+        const parts = dateParam.trim().split('-').map(Number);
+        const y = parts[0], m = parts[1], d = parts[2];
+        const startOfDayUtc = new Date(Date.UTC(y, m - 1, d - 1, 21, 0, 0, 0));
+        const endOfDayUtc = new Date(Date.UTC(y, m - 1, d, 20, 59, 59, 999));
+        whereClause.completedAt = {
+          gte: startOfDayUtc,
+          lte: endOfDayUtc,
+        };
+      }
+
       const sessions = await prisma.gameSession.findMany({
-        where: {
-          brandId: { in: brandRes.brandIds },
-          userId: user.id,
-          isCompleted: true,
+        where: whereClause,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              companyName: true,
+            },
+          },
         },
         orderBy: { completedAt: 'desc' },
       });
@@ -1225,14 +1249,18 @@ app.get(
       return res.json({
         success: true,
         brand: brand.slug,
-        player: {
+        count: sessions.length,
+        bestScore,
+        totalScore,
+        player: user ? {
           id: user.id,
           name: user.name || 'Sparky Runner',
-          phone: user.phone ? `+974 ${user.phone}` : 'N/A',
+          companyName: user.companyName || null,
+          phone: user.phone ? ('+974 ' + user.phone) : 'N/A',
           totalGamesPlayed: sessions.length,
           bestScore,
           totalScore,
-        },
+        } : null,
         sessions: sessions.map((s) => ({
           id: s.id,
           sessionToken: s.sessionToken,
@@ -1240,11 +1268,17 @@ app.get(
           duration: s.duration || 0,
           startedAt: s.startedAt,
           completedAt: s.completedAt,
+          user: s.user ? {
+            id: s.user.id,
+            name: s.user.name || 'Sparky Runner',
+            companyName: s.user.companyName || null,
+            phone: s.user.phone ? ('+974 ' + s.user.phone) : 'N/A',
+          } : null,
         })),
       });
     } catch (err) {
-      console.error('Fetch player sessions error:', err);
-      return res.status(500).json({ error: 'Failed to fetch player sessions' });
+      console.error('Fetch sessions error:', err);
+      return res.status(500).json({ error: 'Failed to fetch sessions' });
     }
   }
 );
