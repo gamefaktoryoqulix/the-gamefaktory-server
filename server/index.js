@@ -1649,10 +1649,26 @@ app.get([
     const brandRes = await resolveBrandAndAliases(brandSlug);
     const targetBrandSlugs = brandRes ? [brandRes.primary.slug, ...brandRes.brandSlugs] : [brandSlug];
 
-    const winners = await prisma.weeklyWinner.findMany({
+    const rawWinners = await prisma.weeklyWinner.findMany({
       where: { brandSlug: { in: targetBrandSlugs } },
       orderBy: { weekStart: 'desc' },
       take: limit
+    });
+
+    const userIds = rawWinners.map(w => w.winnerUserId).filter(Boolean);
+    const users = userIds.length > 0 ? await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, phone: true, companyName: true }
+    }) : [];
+    const userMap = new Map(users.map(u => [u.id, u]));
+
+    const winners = rawWinners.map(w => {
+      const u = w.winnerUserId ? userMap.get(w.winnerUserId) : null;
+      return {
+        ...w,
+        companyName: u?.companyName || null,
+        couponCode: 'PET-WIN-' + w.id.slice(-6).toUpperCase(),
+      };
     });
 
     return res.json({
