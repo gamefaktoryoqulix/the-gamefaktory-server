@@ -2864,6 +2864,54 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
+// DELETE USER & ALL GAME DATA (Privacy Policy Account Deletion)
+app.delete([
+  '/api/brands/:brandSlug/players/:userId',
+  '/api/players/:userId',
+  '/api/user/delete'
+], async (req, res) => {
+  try {
+    const rawUserId = req.params.userId || req.query.userId || req.body.userId || req.query.phone || req.body.phone;
+    if (!rawUserId) {
+      return res.status(400).json({ success: false, error: 'User identifier (ID or phone) is required.' });
+    }
+    const cleanInput = String(rawUserId).trim();
+    const cleanPhone = cleanInput.replace(/\D/g, '').slice(-10);
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: cleanInput },
+          ...(cleanPhone ? [{ phone: cleanPhone }] : []),
+          { phone: cleanInput }
+        ]
+      }
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found in database.' });
+    }
+    const targetUserId = user.id;
+    await prisma.([
+      prisma.gameSession.deleteMany({ where: { userId: targetUserId } }),
+      prisma.brandMember.deleteMany({ where: { userId: targetUserId } }),
+      prisma.gameplayCredit.deleteMany({ where: { userId: targetUserId } }),
+      prisma.qrToken.updateMany({
+        where: { userId: targetUserId },
+        data: { userId: null, livesRemaining: 0, status: 'EXHAUSTED' }
+      }),
+      prisma.user.delete({ where: { id: targetUserId } })
+    ]);
+    console.log('[User Purge] User ' + user.name + ' deleted.');
+    return res.json({
+      success: true,
+      message: 'User account and all associated gameplay data permanently purged.',
+      deletedUserId: targetUserId
+    });
+  } catch (err) {
+    console.error('[User Delete Error]:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete user: ' + err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
