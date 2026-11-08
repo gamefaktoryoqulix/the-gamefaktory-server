@@ -131,6 +131,26 @@ const Icons = {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
     </svg>
+  ),
+  Receipt: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1z" />
+      <line x1="8" y1="7" x2="16" y2="7" />
+      <line x1="8" y1="11" x2="16" y2="11" />
+      <line x1="8" y1="15" x2="13" y2="15" />
+    </svg>
+  ),
+  Search: () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  ),
+  X: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
   )
 };
 
@@ -161,7 +181,7 @@ export default function CoreAdminConsole() {
   
   // Brand Detail View State
   const [selectedBrand, setSelectedBrand] = useState(null);
-  const [brandDetailTab, setBrandDetailTab] = useState('overview'); // 'overview' | 'users' | 'tokens'
+  const [brandDetailTab, setBrandDetailTab] = useState('overview'); // 'overview' | 'users' | 'tokens' | 'invoices'
   const [brandPlayers, setBrandPlayers] = useState([]);
   const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
   const [playersError, setPlayersError] = useState('');
@@ -172,14 +192,22 @@ export default function CoreAdminConsole() {
   const [tokensError, setTokensError] = useState('');
   const [isGeneratingTokens, setIsGeneratingTokens] = useState(false);
 
+  // Brand Invoices / POS Bills State
+  const [brandInvoices, setBrandInvoices] = useState([]);
+  const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
+  const [invoicesError, setInvoicesError] = useState('');
+
   const handleOpenBrandDetails = (brand) => {
     setSelectedBrand(brand);
+    // If brand is railrolls, default or provide access to invoices
     setBrandDetailTab('overview');
     setActiveTab('brand-detail');
     setBrandPlayers([]);
     setBrandTokens([]);
+    setBrandInvoices([]);
     fetchBrandPlayers(brand.slug);
     fetchBrandTokens(brand.slug);
+    fetchBrandInvoices(brand.slug);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -207,8 +235,9 @@ export default function CoreAdminConsole() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successData, setSuccessData] = useState(null);
   
-  // Catalog
+  // Catalog & Search
   const [brandsList, setBrandsList] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isLoadingBrands, setIsLoadingBrands] = useState(false);
 
   // Fetch Brands Catalog
@@ -276,14 +305,43 @@ export default function CoreAdminConsole() {
     }
   };
 
+  // Fetch Invoices / POS Bills for a specific brand
+  const fetchBrandInvoices = async (brandSlug) => {
+    setIsLoadingInvoices(true);
+    setInvoicesError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/brands/${brandSlug}/invoices`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        setInvoicesError(`Server returned HTTP ${res.status}`);
+        return;
+      }
+      const data = await res.json();
+      if (data.success) {
+        setBrandInvoices(data.invoices || []);
+      } else {
+        setInvoicesError(data.error || 'Failed to load invoices for this brand');
+      }
+    } catch (err) {
+      console.error('Fetch invoices error:', err);
+      setInvoicesError(`Network error while loading invoices: ${err.message}`);
+    } finally {
+      setIsLoadingInvoices(false);
+    }
+  };
+
   // Generate Batch of Tokens for Testing
-  const handleGenerateTestTokens = async (brandSlug, count = 10, prefix = 'PET') => {
+  const handleGenerateTestTokens = async (brandSlug, count = 10, prefix = null) => {
     setIsGeneratingTokens(true);
     try {
+      // Determine default prefix according to brand
+      const isMouzy = brandSlug.includes('mouzy') || brandSlug.includes('zuzy');
+      const tokenPrefix = prefix || (isMouzy ? 'GLB' : 'PET');
+
       const res = await fetch(`${API_BASE_URL}/api/brands/${brandSlug}/tokens/batch-create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count, prefix, initialLives: 3 })
+        body: JSON.stringify({ count, prefix: tokenPrefix, initialLives: 3 })
       });
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
@@ -531,27 +589,18 @@ export default function CoreAdminConsole() {
         <div className="brand-logo-area">
           <div className="brand-logo-glyph">GF</div>
           <div className="brand-logo-text">
-            GAMEFAKTORY <span>CORE ADMIN</span>
+            GameFaktory <span>Admin Console</span>
           </div>
         </div>
 
         <nav className="console-nav-tabs">
           <button 
-            className={`nav-tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
+            className={`nav-tab-btn ${activeTab === 'dashboard' || activeTab === 'brand-detail' ? 'active' : ''}`}
             onClick={handleBackToDashboard}
           >
             <Icons.Grid />
             <span>Brand Dashboard</span>
           </button>
-          {selectedBrand && activeTab === 'brand-detail' && (
-            <button 
-              className="nav-tab-btn active"
-              onClick={() => setActiveTab('brand-detail')}
-            >
-              <Icons.Building />
-              <span>{selectedBrand.name}</span>
-            </button>
-          )}
           <button 
             className={`nav-tab-btn ${activeTab === 'register' ? 'active' : ''}`}
             onClick={() => { setActiveTab('register'); setSuccessData(null); }}
@@ -950,11 +999,11 @@ export default function CoreAdminConsole() {
             <div className="dashboard-hero-section">
               <div className="dashboard-hero-title">
                 <h1>
-                  <Icons.Lightning />
-                  <span>BRAND ECOSYSTEM DASHBOARD</span>
+                  <Icons.Building />
+                  <span>Brand Ecosystem</span>
                 </h1>
                 <p>
-                  Centralized command console for active brand tenants, assigned administrators, games, and telemetry metrics.
+                  Manage active brand tenants, assigned administrators, campaign games, and POS billing data.
                 </p>
               </div>
 
@@ -964,20 +1013,18 @@ export default function CoreAdminConsole() {
                   onClick={fetchBrands}
                   disabled={isLoadingBrands}
                   title="Reload brand rosters and live metrics"
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
                   <Icons.Refresh spinning={isLoadingBrands} />
                   <span>{isLoadingBrands ? 'Refreshing...' : 'Refresh'}</span>
                 </button>
                 {brandsList.length > 0 && (
                   <button 
-                    className="btn-cyber-secondary" 
+                    className="btn-card-delete" 
                     onClick={handleResetAllBrands}
-                    style={{ borderColor: 'rgba(255, 75, 75, 0.4)', color: '#ff6b6b', display: 'flex', alignItems: 'center', gap: '6px' }}
                     title="Wipe all brands and records for a completely clean slate"
                   >
                     <Icons.Trash />
-                    <span>Reset All</span>
+                    <span>Reset all</span>
                   </button>
                 )}
                 <button
@@ -985,15 +1032,15 @@ export default function CoreAdminConsole() {
                   onClick={() => { setActiveTab('register'); setCurrentStep(1); }}
                 >
                   <Icons.Plus />
-                  <span>REGISTER NEW BRAND</span>
+                  <span>Register brand</span>
                 </button>
               </div>
             </div>
 
-            {/* Quick Overview Metrics Strip */}
-            <div className="dashboard-metrics-strip">
-              <div className="metric-strip-card">
-                <div className="metric-icon-box" style={{ color: 'var(--color-solar-lime)' }}>
+            {/* Quick Overview Metrics Strip - Designed Pills */}
+            <div className="dashboard-metrics-strip pills-strip">
+              <div className="metric-pill-card pill-lime">
+                <div className="metric-icon-box">
                   <Icons.Building />
                 </div>
                 <div className="metric-strip-info">
@@ -1002,8 +1049,8 @@ export default function CoreAdminConsole() {
                 </div>
               </div>
 
-              <div className="metric-strip-card">
-                <div className="metric-icon-box" style={{ color: 'var(--color-cyan)' }}>
+              <div className="metric-pill-card pill-cyan">
+                <div className="metric-icon-box">
                   <Icons.Gamepad />
                 </div>
                 <div className="metric-strip-info">
@@ -1014,8 +1061,8 @@ export default function CoreAdminConsole() {
                 </div>
               </div>
 
-              <div className="metric-strip-card">
-                <div className="metric-icon-box" style={{ color: 'var(--color-magenta)' }}>
+              <div className="metric-pill-card pill-magenta">
+                <div className="metric-icon-box">
                   <Icons.Shield />
                 </div>
                 <div className="metric-strip-info">
@@ -1026,8 +1073,8 @@ export default function CoreAdminConsole() {
                 </div>
               </div>
 
-              <div className="metric-strip-card">
-                <div className="metric-icon-box" style={{ color: 'var(--color-amber)' }}>
+              <div className="metric-pill-card pill-amber">
+                <div className="metric-icon-box">
                   <Icons.Ticket />
                 </div>
                 <div className="metric-strip-info">
@@ -1036,6 +1083,43 @@ export default function CoreAdminConsole() {
                   </div>
                   <div className="metric-label">QR Tokens Issued</div>
                 </div>
+              </div>
+            </div>
+
+            {/* Catalog Control Bar: Search & Counts */}
+            <div className="brands-control-bar">
+              <div className="brand-search-wrapper">
+                <Icons.Search />
+                <input
+                  type="text"
+                  placeholder="Search brands by name, slug, or game..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="brand-search-input"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="btn-clear-search"
+                    onClick={() => setSearchQuery('')}
+                    title="Clear search"
+                  >
+                    <Icons.X />
+                  </button>
+                )}
+              </div>
+              <div className="brand-results-count">
+                Showing {
+                  brandsList.filter(b => {
+                    const q = searchQuery.toLowerCase().trim();
+                    if (!q) return true;
+                    return (
+                      (b.name && b.name.toLowerCase().includes(q)) ||
+                      (b.slug && b.slug.toLowerCase().includes(q)) ||
+                      (b.gameName && b.gameName.toLowerCase().includes(q))
+                    );
+                  }).length
+                } of {brandsList.length} brands
               </div>
             </div>
 
@@ -1064,7 +1148,17 @@ export default function CoreAdminConsole() {
               </div>
             ) : (
               <div className="brand-cards-grid">
-                {brandsList.map((brand) => (
+                {brandsList
+                  .filter(brand => {
+                    const q = searchQuery.toLowerCase().trim();
+                    if (!q) return true;
+                    return (
+                      (brand.name && brand.name.toLowerCase().includes(q)) ||
+                      (brand.slug && brand.slug.toLowerCase().includes(q)) ||
+                      (brand.gameName && brand.gameName.toLowerCase().includes(q))
+                    );
+                  })
+                  .map((brand) => (
                   <div 
                     key={brand.id} 
                     className="brand-card-item clickable-brand-card"
@@ -1084,42 +1178,20 @@ export default function CoreAdminConsole() {
                         </span>
                       </div>
 
-                      {/* Brand Administrators Preview */}
+                      {/* Brand Activity Metrics Counters */}
                       <div className="brand-card-body">
-                        <div className="brand-card-admins-list">
-                          <div className="section-title">ADMINISTRATOR ROSTER:</div>
-                          {brand.admins && brand.admins.length > 0 ? (
-                            brand.admins.slice(0, 3).map((adm) => (
-                              <div key={adm.id} className="admin-entry">
-                                <span style={{ color: 'var(--color-white)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
-                                  {adm.name || adm.username || adm.email}
-                                </span>
-                                <span className={`role-pill-badge ${adm.role === 'SUPERADMIN' ? 'super' : 'admin'}`}>
-                                  {adm.role}
-                                </span>
-                              </div>
-                            ))
-                          ) : (
-                            <div style={{ color: 'var(--color-muted)', fontSize: '0.78rem' }}>
-                              No admins assigned
-                            </div>
-                          )}
-                          {brand.admins && brand.admins.length > 3 && (
-                            <div style={{ fontSize: '0.7rem', color: 'var(--color-gray)', marginTop: '4px', textAlign: 'right' }}>
-                              +{brand.admins.length - 3} more admin{brand.admins.length - 3 > 1 ? 's' : ''}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Activity Metrics Counters */}
                         <div className="brand-card-stats-grid">
                           <div className="brand-stat-box">
                             <div className="val">{brand._count?.tokens || 0}</div>
-                            <div className="lbl">Tokens</div>
+                            <div className="lbl">Tokens Issued</div>
                           </div>
                           <div className="brand-stat-box">
                             <div className="val">{brand._count?.sessions || 0}</div>
-                            <div className="lbl">Plays</div>
+                            <div className="lbl">Gameplays</div>
+                          </div>
+                          <div className="brand-stat-box">
+                            <div className="val">{brand.admins?.length || 0}</div>
+                            <div className="lbl">Admins</div>
                           </div>
                         </div>
                       </div>
@@ -1217,7 +1289,7 @@ export default function CoreAdminConsole() {
                 </div>
               </div>
 
-              {/* Sub-Navigation Tabs: Overview vs Users vs Tokens */}
+              {/* Sub-Navigation Tabs: Overview vs Users vs Tokens vs Invoices */}
               <div className="brand-page-tabs">
                 <button
                   type="button"
@@ -1242,6 +1314,17 @@ export default function CoreAdminConsole() {
                 >
                   <Icons.Ticket />
                   <span>QR Tokens ({brandTokens.length})</span>
+                </button>
+                <button
+                  type="button"
+                  className={`brand-page-tab-btn ${brandDetailTab === 'invoices' ? 'active' : ''}`}
+                  onClick={() => setBrandDetailTab('invoices')}
+                  style={{
+                    borderColor: brandDetailTab === 'invoices' ? 'var(--color-solar-lime)' : undefined
+                  }}
+                >
+                  <Icons.Receipt />
+                  <span>POS Bills / Invoices ({brandInvoices.length})</span>
                 </button>
               </div>
             </div>
@@ -1290,44 +1373,54 @@ export default function CoreAdminConsole() {
                       <div className="metric-label">Registered Players</div>
                     </div>
                   </div>
+
+                  <div className="metric-strip-card">
+                    <div className="metric-icon-box" style={{ color: '#00fff9' }}>
+                      <Icons.Receipt />
+                    </div>
+                    <div className="metric-strip-info">
+                      <div className="metric-num">{brandInvoices.length}</div>
+                      <div className="metric-label">POS Bills / Invoices</div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* 2-Column Layout: Credentials & Game Link | Admin Roster */}
                 <div className="brand-detail-grid-2">
                   {/* Left Column: API Credentials & Configuration */}
                   <div className="cyber-card">
-                    <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-cyan)', marginBottom: '1.25rem', fontFamily: 'var(--font-primary)', fontSize: '0.85rem' }}>
+                    <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', marginBottom: '1.25rem', fontSize: '0.88rem', fontWeight: 600 }}>
                       <Icons.Key />
-                      <span>DEVELOPER CREDENTIALS & SECRETS</span>
+                      <span>Developer credentials</span>
                     </div>
 
                     <div className="credential-row">
-                      <span className="cred-label">API Key:</span>
+                      <span className="cred-label">API key</span>
                       <code className="cred-val">{selectedBrand.apiKey || `gf_live_${selectedBrand.slug}_key`}</code>
                     </div>
 
                     <div className="credential-row">
-                      <span className="cred-label">Webhook Secret:</span>
+                      <span className="cred-label">Webhook secret</span>
                       <code className="cred-val">{selectedBrand.webhookSecret || `gf_whsec_${selectedBrand.slug}_secret`}</code>
                     </div>
 
                     <div className="credential-row">
-                      <span className="cred-label">Public Launch URL:</span>
-                      <code className="cred-val" style={{ color: 'var(--color-solar-lime)' }}>
+                      <span className="cred-label">Public launch URL</span>
+                      <code className="cred-val" style={{ color: 'var(--accent-primary)' }}>
                         {window.location.origin}/?brand={selectedBrand.slug}
                       </code>
                     </div>
 
-                    <div style={{ marginTop: '1.5rem', padding: '12px 14px', background: 'rgba(0,0,0,0.3)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem', color: 'var(--color-gray)' }}>
-                      Provide the API key to your Unity / WebGL game build client or POS webhooks to authenticate gameplay sessions directly under <strong>{selectedBrand.slug}</strong>.
+                    <div style={{ marginTop: '1.5rem', padding: '12px 14px', background: 'var(--bg-app)', borderRadius: '6px', border: '1px solid var(--border-hairline)', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                      Provide the API key to your Unity / WebGL client or POS webhook endpoints to authenticate gameplay sessions under <strong>{selectedBrand.slug}</strong>.
                     </div>
                   </div>
 
                   {/* Right Column: Admin Roster */}
                   <div className="cyber-card">
-                    <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-solar-lime)', marginBottom: '1.25rem', fontFamily: 'var(--font-primary)', fontSize: '0.85rem' }}>
+                    <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', marginBottom: '1.25rem', fontSize: '0.88rem', fontWeight: 600 }}>
                       <Icons.Shield />
-                      <span>ASSIGNED ADMINISTRATORS ({selectedBrand.admins?.length || 0})</span>
+                      <span>Assigned administrators ({selectedBrand.admins?.length || 0})</span>
                     </div>
 
                     {selectedBrand.admins && selectedBrand.admins.length > 0 ? (
@@ -1495,7 +1588,7 @@ export default function CoreAdminConsole() {
                       type="button"
                       className="btn-add-brand-prominent"
                       style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-                      onClick={() => handleGenerateTestTokens(selectedBrand.slug, 5, 'PET')}
+                      onClick={() => handleGenerateTestTokens(selectedBrand.slug, 5)}
                       disabled={isGeneratingTokens}
                       title="Generate 5 test QR tokens with 3 lives each"
                     >
@@ -1539,11 +1632,11 @@ export default function CoreAdminConsole() {
                     <button
                       type="button"
                       className="btn-add-brand-prominent"
-                      onClick={() => handleGenerateTestTokens(selectedBrand.slug, 5, 'PET')}
+                      onClick={() => handleGenerateTestTokens(selectedBrand.slug, 5)}
                       disabled={isGeneratingTokens}
                     >
                       <Icons.Plus />
-                      <span>Generate 5 Test Tokens (PET-XXXX)</span>
+                      <span>Generate 5 Test Tokens ({selectedBrand.slug.includes('mouzy') || selectedBrand.slug.includes('zuzy') ? 'GLB-XXXXXXXXXX' : 'PET-XXXX-XXXX'})</span>
                     </button>
                   </div>
                 ) : (
@@ -1633,6 +1726,169 @@ export default function CoreAdminConsole() {
                                 <span>Play</span>
                                 <Icons.ExternalLink />
                               </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB CONTENT 4: POS BILLS / INVOICES */}
+            {brandDetailTab === 'invoices' && (
+              <div className="cyber-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '12px' }}>
+                  <div>
+                    <h3 style={{ margin: '0 0 4px 0', color: 'var(--color-white)', fontSize: '1.15rem' }}>
+                      POS Invoices & Bill Ingestion Roster
+                    </h3>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--color-gray)' }}>
+                      Live billing payloads received from the POS system (Swiggy, Zomato, Dine-In, Takeaway) for <strong>{selectedBrand.name}</strong>.
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      type="button"
+                      className="btn-cyber-secondary"
+                      style={{ padding: '6px 14px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                      onClick={() => fetchBrandInvoices(selectedBrand.slug)}
+                      disabled={isLoadingInvoices}
+                    >
+                      <Icons.Refresh spinning={isLoadingInvoices} />
+                      <span>{isLoadingInvoices ? 'Refreshing...' : 'Refresh Bills'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {isLoadingInvoices ? (
+                  <div className="empty-sub-panel" style={{ padding: '4rem 2rem' }}>
+                    <div className="status-dot-pulse" style={{ margin: '0 auto 12px auto' }}></div>
+                    <h4 style={{ color: 'var(--color-white)', marginBottom: '4px' }}>Loading Invoices...</h4>
+                    <p style={{ color: 'var(--color-gray)', margin: 0 }}>Retrieving POS billing logs from {activeConfig.badgeText}</p>
+                  </div>
+                ) : invoicesError ? (
+                  <div className="error-alert-banner" style={{ margin: '1rem 0' }}>
+                    <Icons.AlertTriangle />
+                    <span>{invoicesError}</span>
+                  </div>
+                ) : brandInvoices.length === 0 ? (
+                  <div className="empty-sub-panel" style={{ padding: '4rem 2rem' }}>
+                    <div style={{ color: 'var(--color-gray)', marginBottom: '12px' }}>
+                      <Icons.Receipt />
+                    </div>
+                    <h3 style={{ color: 'var(--color-white)', marginBottom: '6px' }}>No POS Bills Ingested Yet</h3>
+                    <p style={{ color: 'var(--color-muted)', fontSize: '0.88rem', maxWidth: '500px', margin: '0 auto' }}>
+                      Bills posted to <code>/api/webhooks/railrolls/bill</code> will appear here automatically with order items and credited lives.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="admins-table-wrapper">
+                    <table className="cyber-table">
+                      <thead>
+                        <tr>
+                          <th>Invoice / Order #</th>
+                          <th>Customer Phone & Name</th>
+                          <th>Source & Type</th>
+                          <th>Outlet Code</th>
+                          <th>Items Ordered</th>
+                          <th>Amount</th>
+                          <th>Plays Credited</th>
+                          <th>Status</th>
+                          <th>Created At</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {brandInvoices.map((inv) => (
+                          <tr key={inv.id}>
+                            <td>
+                              <strong style={{ color: 'var(--color-solar-lime)', fontFamily: 'var(--font-mono)' }}>
+                                {inv.customerInvoiceId || inv.invoiceNumber}
+                              </strong>
+                              {inv.invoiceNumber !== inv.customerInvoiceId && (
+                                <div style={{ fontSize: '0.72rem', color: 'var(--color-gray)' }}>
+                                  Ref: #{inv.invoiceNumber}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              {inv.customerPhone ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--color-cyan)', fontWeight: 500 }}>
+                                  <Icons.Phone />
+                                  <span>+91 {inv.customerPhone}</span>
+                                </div>
+                              ) : (
+                                <span style={{ color: 'var(--color-muted)', fontSize: '0.78rem', fontStyle: 'italic' }}>
+                                  No Phone (Walk-in)
+                                </span>
+                              )}
+                              {inv.customerName && (
+                                <div style={{ fontSize: '0.75rem', color: 'var(--color-white)', marginTop: '2px' }}>
+                                  {inv.customerName}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <span style={{ 
+                                padding: '3px 8px', 
+                                borderRadius: '4px', 
+                                fontSize: '0.75rem',
+                                background: inv.orderFrom === 'Swiggy' ? 'rgba(252, 128, 25, 0.2)' : inv.orderFrom === 'Zomato' ? 'rgba(235, 47, 47, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                                color: inv.orderFrom === 'Swiggy' ? '#fc8019' : inv.orderFrom === 'Zomato' ? '#ff5252' : 'var(--color-white)',
+                                fontWeight: 600
+                              }}>
+                                {inv.orderFrom}
+                              </span>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--color-muted)', marginTop: '3px' }}>
+                                {inv.orderType}
+                              </div>
+                            </td>
+                            <td>
+                              <code style={{ fontSize: '0.78rem', color: 'var(--color-gray)' }}>
+                                {inv.outletCode || 'DEFAULT'}
+                              </code>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: '0.82rem', color: 'var(--color-white)', display: 'block', maxWidth: '200px', whiteSpace: 'normal' }}>
+                                {inv.itemsSummary || `${inv.itemsCount} items`}
+                              </span>
+                            </td>
+                            <td>
+                              <strong style={{ color: 'var(--color-amber)', fontSize: '0.95rem' }}>
+                                ₹{inv.amount}
+                              </strong>
+                            </td>
+                            <td>
+                              <span style={{ 
+                                color: 'var(--color-solar-lime)', 
+                                fontWeight: 'bold', 
+                                fontSize: '0.95rem' 
+                              }}>
+                                +{inv.maxPlaysAllowed} lives
+                              </span>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>
+                                ({inv.itemsCount} items x 3)
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`role-pill-badge ${inv.status === 'UNCLAIMED' ? 'super' : 'admin'}`} style={{
+                                background: inv.status === 'UNCLAIMED' ? 'rgba(0, 230, 118, 0.15)' : 'rgba(158, 158, 158, 0.15)',
+                                color: inv.status === 'UNCLAIMED' ? 'var(--color-emerald)' : 'var(--color-muted)',
+                                borderColor: inv.status === 'UNCLAIMED' ? 'var(--color-emerald)' : 'var(--color-muted)'
+                              }}>
+                                {inv.status}
+                              </span>
+                              {inv.claimedAt && (
+                                <div style={{ fontSize: '0.68rem', color: 'var(--color-muted)', marginTop: '2px' }}>
+                                  Claimed {new Date(inv.claimedAt).toLocaleDateString()}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <span style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>
+                                {new Date(inv.createdAt).toLocaleDateString()}
+                              </span>
                             </td>
                           </tr>
                         ))}

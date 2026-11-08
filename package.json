@@ -1,0 +1,13 @@
+{
+  "name": "the-gamefaktory-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GameFaktory Server and Admin Console Workspace",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev:server": "node server/index.js",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build"
+  }
+}
+

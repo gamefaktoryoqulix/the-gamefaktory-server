@@ -19,9 +19,22 @@ model User {
   companyName     String?          // For contractor / business owner identification
   age             Int?
   password        String?          // Hashed password for admin authentication
-  role            String           @default("PLAYER") // "CORE_ADMIN", "SUPERADMIN", "ADMIN", "PLAYER"
+  role            String           @default("PLAYER") // "CORE_ADMIN", "SUPERADMIN", "ADMIN", "OUTLET_ADMIN", "PLAYER"
   brandId         String?          // Tenant isolation: Which brand this admin belongs to
   brand           Brand?           @relation("BrandAdmins", fields: [brandId], references: [id], onDelete: SetNull)
+  outletId        String?          // Outlet-specific admin linkage
+  outlet          Outlet?          @relation(fields: [outletId], references: [id], onDelete: SetNull)
+  
+  // ZuzyRun / Mouzy Runner Specific Player Fields
+  homeOutletId      String?          @map("home_outlet_id")
+  homeOutlet        Outlet?          @relation("PlayerHomeOutlet", fields: [homeOutletId], references: [id], onDelete: SetNull)
+  highScore         Int              @default(0) @map("high_score")
+  totalScore        BigInt           @default(0) @map("total_score")
+  dailyHighScore    Int              @default(0) @map("daily_high_score")
+  dailyLastPlayedAt String?          @map("daily_last_played_at") // 'YYYY-MM-DD' in Asia/Kolkata timezone
+  dob               String?
+  lastPlayedAt      DateTime?        @default(now()) @map("last_played_at")
+
   emailVerified   Boolean          @default(false)
   image           String?
   createdAt       DateTime         @default(now())
@@ -33,9 +46,16 @@ model User {
   gameplayCredits GameplayCredit[]
   gameSessions    GameSession[]
   qrTokens        QrToken[]
+  tokensOwned     Token[]          @relation("TokenOwner")
   weeklyGiftsWon  WeeklySpecialGift[]
+  brandMemberships BrandMember[]
+  userCoupons     UserCoupon[]
+  dailyWins       DailyWinner[]
 
   @@index([brandId, role])
+  @@index([outletId])
+  @@index([totalScore(sort: Desc)])
+  @@index([homeOutletId, dailyLastPlayedAt, dailyHighScore(sort: Desc)])
 }
 
 model Session {
@@ -91,11 +111,84 @@ model Brand {
   updatedAt     DateTime         @updatedAt
   
   admins        User[]           @relation("BrandAdmins")
+  outlets       Outlet[]
   invoices      Invoice[]
   credits       GameplayCredit[]
   sessions      GameSession[]
   tokens        QrToken[]
   weeklyGifts   WeeklySpecialGift[]
+  tokensV1      Token[]
+  members       BrandMember[]
+  userCoupons   UserCoupon[]
+  dailyWinners  DailyWinner[]
+}
+
+model Token {
+  tokenId     String    @id @map("token_id") // e.g. 'GLB-3AD5N99Z1K'
+  type        String    @default("global")
+  livesLeft   Int       @default(3) @map("lives_left")
+  status      String    @default("active") // 'active' | 'expired' | 'revoked'
+  ownerPhone  String?   @map("owner_phone")
+  owner       User?     @relation("TokenOwner", fields: [ownerPhone], references: [phone], onDelete: SetNull)
+  expiresAt   DateTime? @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  brandId     String?   @map("brand_id")
+  brand       Brand?    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@map("tokens")
+  @@index([ownerPhone])
+  @@index([status])
+  @@index([brandId])
+}
+
+model Outlet {
+  id          String   @id // e.g. 'in-ke-parappa', 'uae-karama'
+  name        String   // e.g. 'Mouzy Parappanangadi'
+  place       String   // e.g. 'Parappanangadi'
+  countryCode String   @default("+91") @map("country_code") // e.g. '+91', '+971', '+966', '+974'
+  status      String   @default("active") // 'active' | 'inactive'
+  brandId     String?  @map("brand_id")
+  brand       Brand?   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  admins      User[]
+  players     User[]   @relation("PlayerHomeOutlet")
+  members     BrandMember[]
+  userCoupons UserCoupon[]
+  dailyWinners DailyWinner[]
+
+  @@map("outlets")
+  @@index([status])
+  @@index([brandId])
+}
+
+model BrandMember {
+  id              String    @id @default(uuid())
+  
+  userId          String    @map("user_id")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  brandId         String    @map("brand_id")
+  brand           Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  homeOutletId    String?   @map("home_outlet_id")
+  homeOutlet      Outlet?   @relation(fields: [homeOutletId], references: [id], onDelete: SetNull)
+  
+  registeredVia   String    @default("QR_TOKEN") @map("registered_via") // "QR_TOKEN", "MANUAL", "BYOD", "INVOICE"
+  initialTokenId  String?   @map("initial_token_id")
+  
+  totalScore      BigInt    @default(0) @map("total_score")
+  highScore       Int       @default(0) @map("high_score")
+  dailyHighScore  Int       @default(0) @map("daily_high_score")
+  dailyLastPlayed String?   @map("daily_last_played") // YYYY-MM-DD
+  
+  createdAt       DateTime  @default(now()) @map("created_at")
+  lastActiveAt    DateTime  @default(now()) @map("last_active_at")
+
+  @@unique([userId, brandId])
+  @@map("brand_members")
+  @@index([brandId, homeOutletId])
+  @@index([brandId, createdAt])
 }
 
 enum InvoiceStatus {
@@ -251,4 +344,71 @@ model WeeklySpecialGift {
 
   @@unique([brandSlug, weekLabel, giftType])
   @@index([brandSlug, isClaimed])
+}
+
+// ----------------------------------------------------
+// STORE REWARDS & COUPON REDEMPTION (MOUZY & MULTI-TENANT)
+// ----------------------------------------------------
+
+model UserCoupon {
+  id             BigInt    @id @default(autoincrement())
+  couponCode     String    @unique @map("coupon_code") @db.VarChar(32) // e.g. 'MZ-7K2X9A'
+  brandSlug      String    @default("mouzy") @map("brand_slug") @db.VarChar(64)
+  brandId        String?   @map("brand_id")
+  brand          Brand?    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  userPhone      String    @map("user_phone") @db.VarChar(32)
+  user           User?     @relation(fields: [userPhone], references: [phone], onDelete: Cascade)
+  
+  playerName     String    @map("player_name") @db.VarChar(255)
+  rewardLabel    String    @map("reward_label") @db.VarChar(255) // e.g. 'Free Regular Avilmilk'
+  pointsSpent    Int       @map("points_spent")
+  redeemed       Boolean   @default(false)
+  redeemedAt     DateTime? @map("redeemed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  
+  outletId       String?   @map("outlet_id") @db.VarChar(64)
+  outlet         Outlet?   @relation(fields: [outletId], references: [id], onDelete: SetNull)
+
+  @@map("user_coupons")
+  @@index([userPhone])
+  @@index([couponCode])
+  @@index([brandSlug])
+  @@index([brandId])
+}
+
+// ----------------------------------------------------
+// MULTI-TENANT DAILY WINNERS & TOPPERS HISTORY
+// ----------------------------------------------------
+
+model DailyWinner {
+  id             BigInt    @id @default(autoincrement())
+  brand          String    @db.VarChar(64) // e.g. 'mouzy', 'sparky'
+  brandId        String?   @map("brand_id")
+  brandRel       Brand?    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  outletId       String    @map("outlet_id") @db.VarChar(64)
+  outlet         Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  
+  winDate        String    @map("win_date") @db.VarChar(10) // 'YYYY-MM-DD' in Asia/Kolkata
+  rank           Int
+  winId          String    @unique @map("win_id") @db.VarChar(64) // e.g. 'DW-PARAPPA-A56A72'
+  
+  userPhone      String    @map("user_phone") @db.VarChar(32)
+  user           User?     @relation(fields: [userPhone], references: [phone], onDelete: Cascade)
+  
+  playerName     String    @map("player_name") @db.VarChar(255)
+  dailyHighScore Int       @map("daily_high_score")
+  totalScore     BigInt    @map("total_score")
+  
+  rewardMetadata Json      @default("{}") @map("reward_metadata") // e.g. { "label": "Free Supreme Avil Milk", "rank": 1 }
+  redeemed       Boolean   @default(false)
+  redeemedAt     DateTime? @map("redeemed_at")
+  capturedAt     DateTime  @default(now()) @map("captured_at")
+
+  @@map("daily_winners")
+  @@index([brand, outletId, winDate], name: "idx_daily_winners_brand_outlet_date")
+  @@index([brand, userPhone], name: "idx_daily_winners_brand_phone")
+  @@index([winId], name: "idx_daily_winners_code")
+  @@index([winDate])
 }
