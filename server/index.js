@@ -975,6 +975,8 @@ app.post(
           data: {
             userId: user.id,
             brandId: brand.id,
+            tokenCode: token.code,
+            tokenId: token.id,
             sessionToken: sessionToken,
             score: 0,
             isCompleted: false,
@@ -1264,6 +1266,8 @@ app.get(
         sessions: sessions.map((s) => ({
           id: s.id,
           sessionToken: s.sessionToken,
+          tokenCode: s.tokenCode || null,
+          tokenId: s.tokenId || null,
           score: s.score,
           duration: s.duration || 0,
           startedAt: s.startedAt,

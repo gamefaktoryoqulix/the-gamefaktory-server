@@ -244,6 +244,8 @@ model GameSession {
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   brandId      String
   brand        Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  tokenCode    String?   // e.g. "PET-9XK2-MP8A" or token string used to play
+  tokenId      String?   // optional reference to QrToken.id
   sessionToken String    @unique // Single-use cryptographic token for anti-cheat
   score        Int       @default(0)
   duration     Int?      // Duration in seconds
@@ -253,6 +255,7 @@ model GameSession {
 
   @@index([brandId, score])
   @@index([userId, brandId])
+  @@index([tokenCode])
 }
 
 model QrToken {
